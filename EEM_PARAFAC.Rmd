@@ -1,0 +1,2114 @@
+---
+title: "R script for EEM PARAFAC analysis"
+author: "Sven Tobias-Hünefeldt"
+date: "01/12/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+#Load packages
+```{r}
+library(dplyr)
+library(tidyr)
+library(staRdom)
+library(data.table)
+library(reshape2)
+library(beepr)
+
+```
+
+#Set up environment and functions
+```{r Set up environment}
+#Set seed to make results more reproducible
+set.seed(2)
+#Set language to English
+Sys.setenv(LANG = "en")
+#Set up working directory
+setwd("C:/Users/hunefeldt/OneDrive/Desktop/R_analysis/EEM_PARAFAC/R_Analysis/")
+#Define theme for plotting
+My_Theme = theme_bw()+
+  theme(# theme_grey(base_size = 22),
+       axis.text.x = element_text(angle=0, colour = "black", vjust=1, hjust = 0.5, size=18), 
+       axis.text.y = element_text(colour = "black", size=18),
+       axis.title.y = element_text(size=18, face = "bold"),
+       axis.title.x = element_text(size=18, face = "bold"),
+       plot.title = element_text(size = 18, hjust = 0.5),
+       legend.title =element_text(size = 18),
+       legend.text = element_text(size = 16),
+       legend.position="right",
+       legend.key.size = unit(1, "cm"),
+       strip.text.x = element_text(size=18, face="bold"),
+       strip.text.y = element_text(size=18, face="bold"),
+       #panel.background = element_blank(),
+       panel.border = element_rect(fill = NA, colour = "black"),
+       strip.background = element_rect(colour="black"),
+       text = element_text(family = "sans"))
+
+#Station specific colours for consistency
+Station_colour_list <- c("Station1" =  "black",
+                "Station2" = "red",
+                #"" = "violet",
+                #"" = "violetred4", 
+                "Station3" = "navy",
+                #"" = "",
+                #"" = "thistle3", 
+                "Station4" = "forestgreen",
+                #"" = "darkred",
+                "Station5" = "green",
+                #"" = "orange",
+                #"" = "turquoise",
+                #"" = "cornflowerblue",
+                #"" = "beige",
+                "Station6" = "magenta")
+
+#Colourblind friendly pallete
+cbbPalette <- c("black",
+                "red",
+                "forestgreen",
+                #"navy",
+                "green", 
+                "magenta")
+#If more options are needed
+expanded_cbbPalette <- c("#000000", #Black
+                "#E69F00", #Orange
+                "#56B4E9", #Blue (light)
+                "#009E73", #Sea green
+                "#CC79A7", #Magenta (light)
+                "#F0E442", #Yellow
+                "#D55E00", #Burnt orange
+                "magenta",
+               # "gray38",
+                "#0072B2", #Blue
+                "dodgerblue4",
+                "rosybrown",
+                "floralwhite",
+                "lightgoldenrod4",
+                "cornsilk3",
+                "coral4",
+                "turquoise4",
+                "springgreen3",
+                "slateblue3",
+                "forestgreen",
+                "lightgreen") 
+#Shapes for ggplot2
+Shape_list = c(#0, #Hollow square
+               15, #Filled square
+               #1, #Hollow circle
+               16, #Filled circle
+               #2, #Hollow triangle
+               17, #Filled triangle
+               #5, #Hollow diamond
+               18, #Filled diamonds
+               25) #Upside down filled triangle
+                
+#Set up position dodge for ggplot2
+pd = position_dodge(0.15)
+
+ConditionColourList <- c("AlcianBlue" = "black",
+                         "CBBG" = "red")
+
+```
+```{r String cutting function}
+
+substrRight <- function(x, n){
+  substr(x, nchar(x)-n+1, nchar(x))
+}
+
+```
+
+
+#Set up parallel processing
+```{r}
+cores <- detectCores(logical = FALSE)
+cores
+```
+
+#Import Raw data
+##Import EEM data - ensure it's in .csv format
+Need to manually change the data type, and remove the unecessary information at the top of the file
+
+Blanks are samples of ultrapure water that must contain either “nano,” “miliq,” “milliq,” “mq” or “blank” in their file names. They can be used to apply blank subtractionand Raman normalisation (see below) and are used for samples in the same (sub)folders. If multiple blanks were measured, they are averaged. The example data consist of only two folders with one blank each. Blanks are subtracted from each sample to reduce the effects of scatter bands and systematic errors (Murphy et al. 2013).
+```{r}
+
+eem_list<-eem_read("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/Clean_Data/EEM/", recursive = TRUE, import_function = eem_csv)# importfunction=eem_csv because columns are the Excitation wave length
+
+eem_list
+
+```
+##Import absorbance data
+Need to manually change the data type, and remove the unecessary information at the top of the file
+```{r}
+
+absorbance <- absorbance_read("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/Clean_Data/Absorbance", cores = cores) # load csv or txt tables in folder
+absorbance
+
+```
+##Import metadata
+Each EEM is multiplied with a dilution factor (e.g. 10 if 1 part sample was diluted with 9 parts ultrapure water). Either a single numeric value for all samples or a table with a specific value for each sample is used.
+
+So a dilution to half (1mL MW : 1 mL Sample) means a dilution factor of 2
+```{r}
+
+#Generate metadata file
+eem_metatemplate(eem_list, absorbance) %>%
+  write.csv(file="C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/metatable.csv", row.names = FALSE)
+
+meta = read.csv("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/metatable_dreem.csv", row.names = 1)
+
+```
+##Check that import worked fine
+```{r}
+problem <- eem_checkdata(eem_list,absorbance,meta,metacolumns = c("dilution"),error=FALSE)
+problem
+```
+#Data quality checking
+##Absorbance baseline correction
+Best to use high wavelength, hence here we use the highest we generated, 750-900.
+```{r}
+
+#Check for negative numbers
+for (val in absorbance) {
+
+if (val > 0) {
+ print("Positive number")
+} else if (val == 0) {
+ print("0")
+} else if (val < 0) {
+ print("Negative number")
+} else {
+  print("Something broke")
+}
+}
+
+
+#Remove blank values manually in excel:
+#write.csv(absorbance,  "CorrectedAbsorbance.csv")
+absorbance = read.csv("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/CorrectedAbundance_mod.csv", header = T)
+#absorbance_V0 = absorbance
+colnames(absorbance) = gsub("ï..", "", colnames(absorbance))
+
+absorbance
+
+
+absorbance <- abs_blcor(absorbance,wlrange = c(700,800)) #Absorbance baseline correction to eliminate instrument noise and scattering
+absorbance #See if absorbance data was/has changed by absorbance baseline correction
+
+```
+##Visualise EEM overview
+```{r}
+##Visualising plots of the EEM data in the eem_list 
+#spp means number of samples per plot spp=9 or spp=c(rows,columns)
+#contour adds contour lines to the EEM plots 
+#eem_overview_plot(eem_list, spp=9, contour = TRUE, eemlist_order=FALSE)
+
+
+```
+##EEM blank subtraction
+```{r}
+# extending and interpolation data
+eem_list <- eem_extend2largest(eem_list, interpolation = 1, extend = FALSE, cores = cores)
+
+# blank subtraction
+eem_list <- eem_remove_blank(eem_list)
+
+#eem_overview_plot(eem_list, spp=9, contour = TRUE)
+
+
+```
+##Inner-filter effect correction
+inner filter effect is corrected using absorbance data
+```{r}
+
+eem_list <- eem_ife_correction(eem_list, abs_data = absorbance, cuvl = 5)
+
+#eem_overview_plot(eem_list, spp=9, contour = TRUE)
+
+```
+##Raman normalisation
+```{r}
+
+eem_list <- eem_raman_normalisation2(eem_list, blank = "blank")
+
+#eem_overview_plot(eem_list, spp=9, contour = TRUE)
+
+```
+##Remove blank from the data set
+```{r}
+
+eem_list <- eem_extract(eem_list, c("nano", "miliq", "milliq", "mq", "blank"),ignore_case = TRUE)
+absorbance <- dplyr::select(absorbance, -matches("nano|miliq|milliq|mq|blank", ignore.case = TRUE))
+
+
+```
+##Remove and interpolate scattering - Play around with the scatter width until it works for you.
+```{r}
+
+remove_scatter <- c(TRUE, TRUE, TRUE, TRUE)
+remove_scatter_width <- c(15,15,15,15) #wavelength width in nm, one for each scatter type (Murphy et al. 2013; Lakowicz 2006).
+eem_list_15 <- eem_rem_scat(eem_list, remove_scatter = remove_scatter, remove_scatter_width = remove_scatter_width)
+remove_scatter_width <- c(25)
+eem_list_25 <- eem_rem_scat(eem_list, remove_scatter = remove_scatter, remove_scatter_width = remove_scatter_width)
+remove_scatter_width <- c(35,35,35,35)
+eem_list_35 <- eem_rem_scat(eem_list, remove_scatter = remove_scatter, remove_scatter_width = remove_scatter_width)
+#eem_overview_plot(eem_list_15, spp=25, contour = TRUE)
+#eem_overview_plot(eem_list_25, spp=25, contour = TRUE)
+#eem_overview_plot(eem_list_35, spp=25, contour = TRUE)
+
+#Interpolate
+eem_list_15 <- eem_interp(eem_list_15, cores = cores, type = 1, extend = FALSE)
+eem_list_25 <- eem_interp(eem_list_25, cores = cores, type = 1, extend = FALSE)
+eem_list_35 <- eem_interp(eem_list_35, cores = cores, type = 1, extend = FALSE)
+eem_overview_plot(eem_list_15, spp=49, contour = TRUE) # This looks like it messes the trends up quite badly, with large spikes
+eem_overview_plot(eem_list_25, spp=49, contour = TRUE)
+eem_overview_plot(eem_list_35, spp=49, contour = TRUE) # This looks like it smooths over a lot of the details of the rings that we saw before.
+
+#25 looks like the best option, as it removes the First and Second order Rayleigh scattering as well as the Raman scattering next to it.
+#https://www.google.com/url?sa=i&url=https%3A%2F%2Fpubs.rsc.org%2Fen%2Fcontent%2Farticlehtml%2F2012%2Fay%2Fc2ay25646k&psig=AOvVaw1KOH0eCLFMmFgDB3IVyqgC&ust=1647685584389000&source=images&cd=vfe&ved=0CAsQjRxqFwoTCKCB1s65z_YCFQAAAAAdAAAAABAD
+
+```
+##Correct for dilution using metadata
+```{r}
+
+dil_data <- meta["dilution"]
+
+eem_list <- eem_dilution(eem_list_25,dil_data)
+eem_overview_plot(eem_list, spp=49, contour = TRUE)
+
+```
+##Smoothing data - not recommended for PARAFAC analysis
+```{r}
+
+#Smoothing data (important for peak picking and indicies determination)
+eem4peaks <- eem_smooth(eem_list, n = 5, cores = cores)##moving average window size was 5nm
+eem4peaks
+
+```
+##Sample overview
+Ensure that all are set to true
+```{r}
+summary(eem_list)
+```
+#Peak picking and indices
+```{r Freshness function}
+
+#The ratio of emission intensity at 380 nm divided by the maximum emission intensity between 420 nm and 435 nm at excitation 310 nm
+#An indicator of recently produced DOM, with higher values representing a higher proportion of fresh DOM
+#Parlanti et al. ( 2000), Wilson and Xenopoulos ( 2009)
+
+eem.df = eem4peaks
+eem_freshness <- function (eem.df, verbose = TRUE) {
+  stopifnot(is_eemlist(eem.df) | is_eem(eem.df))
+  if (is_eemlist(eem.df)) {
+    res <- lapply(eem.df, eem_freshness, verbose = verbose)
+    res <- dplyr::bind_rows(res)
+    return(res)
+  }
+  if (!all(310 %in% eem.df$ex & c(380, 435) %in% eem.df$em) & verbose) {
+    warning(eemR:::msg_warning_wavelength(), call. = FALSE)
+    
+  }
+  
+  #Make series for calculating maximum emissions between 420 and 435
+  em_420_435 <- seq(from = 420, to = 435, by = 1)
+  ex_310 <- rep(310, length(em_420_435))
+  
+  #Calculate max emissions between 420 and 435 nm as a result of excitation at 310 nm
+  max_em_420_435 <- max(pracma::interp2(eem.df$ex, eem.df$em, eem.df$x, 
+                                        as.numeric(ex_310), as.numeric(em_420_435)))
+  #Calculate emissions at 380nm as a result of excitation at 310 nm
+  fluo_380 <- pracma::interp2(eem.df$ex, eem.df$em, eem.df$x, 310, 
+                              380)
+  
+  #print(fluo_380)
+  fresh <- fluo_380/max_em_420_435 #Calculate freshness (B/a)
+  return(data.frame(sample = eem.df$sample, freshness = fresh, stringsAsFactors = FALSE)) #Return column with data
+  
+}
+
+
+#Baseline functions required for calculations when not relying on the eemR package
+is_eemlist <- function (eem) {
+  ifelse(class(eem) == "eemlist", TRUE, FALSE)
+}
+
+is_eem <- function (eem) {
+  ifelse(class(eem) == "eem", TRUE, FALSE)
+}
+
+
+eem_freshness(eem4peaks)
+
+```
+```{r Relative fluorescence efficiency function - change absorbance file name as required}
+
+#Ratio of fluorescence at ex370/em460 (FDOM) to absorbance at 370 nm
+#RFE is an indicator of the relative amount of algal and non-algal DOM
+#Downing et al. (2009)
+
+
+eem_RelativeFluorescenceEfficiency <- function (eem.df, verbose = TRUE) 
+{
+  stopifnot(is_eemlist(eem.df) | is_eem(eem.df))
+  #stopifnot(is.data.frame(absorbance.df))
+  if (is_eemlist(eem.df)) {
+    res <- lapply(eem.df, eem_RelativeFluorescenceEfficiency, verbose = T)
+    res <- dplyr::bind_rows(res)
+    return(res)
+  }
+  if (!all(310 %in% eem.df$ex & c(365, 480) %in% eem.df$em) & verbose) {
+    warning(eemR:::msg_warning_wavelength(), call. = FALSE)
+  }
+  
+  #Extract sample list
+  #sample_list = res$sample
+  
+  #Calculate emissions at 460nm as a result of excitation at 370 nm
+  fluo_460 <- pracma::interp2(eem.df$ex, eem.df$em, eem.df$x, 
+                              370, 460)
+  tmpabsorbance = absorbance
+  rownames(tmpabsorbance) = tmpabsorbance$wavelength
+  tmpabsorbance$wavelength = NULL
+  
+  #Get absorbance at 370nm
+  absorb_370 <- t(tmpabsorbance["370",])
+  
+  #Preliminary results - still need to be cleaned up
+  results.df = data.frame(sample = eem.df$sample,
+                          eemsample = eem.df$sample, 
+                          abssample = rownames(absorb_370), 
+                          fluo_460 = fluo_460, 
+                          absorb_370 = absorb_370, 
+                          stringsAsFactors = FALSE)
+  
+  #Calculate REF
+  results.df$REF = results.df$fluo_460 / results.df$X370
+  #Clean up results table
+  matches = (results.df$eemsample == results.df$abssample)
+  results.df = subset(results.df, matches)
+  
+  results.df$eemsample = NULL
+  results.df$abssample = NULL
+  results.df$fluo_460 = NULL
+  results.df$X370 = NULL
+  
+  #Return dataframe with results
+  return(results.df) #Return column with data
+}
+
+
+eem_RelativeFluorescenceEfficiency(eem.df = eem4peaks)
+
+
+#Baseline functions required for calculations when not relying on the eemR package
+is_eemlist <- function (eem) {
+  ifelse(class(eem) == "eemlist", TRUE, FALSE)
+}
+
+is_eem <- function (eem) {
+  ifelse(class(eem) == "eem", TRUE, FALSE)
+}
+
+
+```
+
+
+```{r}
+
+##interpretation of peaks
+#bix=Biological/freshness index/indicative of microbial or biological activity
+#Hix=Humuification index higher the value the higher the humification and poly condition
+##Fi=Fluorescence index a good indicator of the general source and aromaticity of DOM
+#a= peak a (humic like material intensity)
+#b=peak b(Tyrosin-like material intensity)
+#c=peak c (Humic-like material intensity)
+#m=peak m (Marine humic like intensity)
+#T=peak t (Tryptophan like material intensity)
+
+library(staRdom)
+bix <- eem_biological_index(eem4peaks)
+#The ratio of emission intensity at 380 nm divided by 430 nm at excitation 310 nm
+#An indicator of autotrophic productivity. High values (>1) correspond to recently produced DOM of autochthonous origin
+coble_peaks <- eem_coble_peaks(eem4peaks)
+fi <- eem_fluorescence_index(eem4peaks)
+#The ratio of em wavelengths at 470 nm and 520 nm, obtained at ex 370
+#Shown to identify the relative contribution of terrestrial and microbial sources to the DOM pool
+hix <- eem_humification_index(eem4peaks, scale = TRUE)
+#The area under the em spectra 435–480 nm divided by the peak area 300–345 nm 1 435–480 nm, at ex 254 nm
+#An indicator of humic substance content or extent of humification. Higher values indicate an increasing degree of humification
+
+#Fresh <- eem_freshness(eem.df = eem4peaks) #This one is the same as BIX
+#The ratio of emission intensity at 380 nm divided by the maximum emission intensity between 420 nm and 435 nm at excitation 310 nm
+RFE <- eem_RelativeFluorescenceEfficiency(eem.df = eem4peaks) # I need to clean this function up, I need to be able to specify the particular absorbance data frame
+#Ratio of fluorescence at ex370/em460 (FDOM) to absorbance at 370 nm
+
+indices_peaks <- bix %>%
+  full_join(coble_peaks, by = "sample") %>%
+  full_join(fi, by = "sample") %>%
+  full_join(hix, by = "sample") %>%
+ # full_join(Fresh, by = "sample") %>%
+  full_join(RFE, by = "sample")
+
+indices_peaks
+#bix=Biological/freshness index/indicative of microbial or biological activity - An indicator of autotrophic productivity. High values (>1) correspond to recently produced DOM of autochthonous origin
+#Hix=Humification index higher the value the higher the humification and poly condition - An indicator of humic substance content or extent of humification. Higher values indicate an increasing degree of humification
+##Fi=Fluorescence index a good indicator of the general source and aromaticity of DOM - Shown to identify the relative contribution of terrestrial and microbial sources to the DOM pool
+#a= peak a (humic like material intensity)
+#b=peak b(Tyrosin-like material intensity)
+#c=peak c (Humic-like material intensity)
+#m=peak m (Marine humic like intensity)
+#T=peak t (Tryptophan like material intensity)
+#Freshness is an indicator of recently produced DOM, with higher values representing a higher proportion of fresh DOM
+#RFE is an indicator of the relative amount of algal and non-algal DOM
+
+#Make new column to differentiate Sample dates
+indices_peaks$Date = substrRight(indices_peaks$sample, 5)
+indices_peaks$Date = gsub("10721", "Jul-21", indices_peaks$Date)
+indices_peaks$Date = gsub("20721", "Jul-21", indices_peaks$Date)
+indices_peaks$Date = gsub("11121", "Nov-21", indices_peaks$Date)
+indices_peaks$Date = gsub("10222", "Feb-22", indices_peaks$Date)
+indices_peaks$Date = gsub("20222", "Feb-22", indices_peaks$Date)
+indices_peaks$Date = gsub("10522", "May-22", indices_peaks$Date)
+indices_peaks$Date = gsub("20522", "May-22", indices_peaks$Date)
+indices_peaks$Date = gsub("10622", "Jun-22", indices_peaks$Date)
+indices_peaks$Date = gsub("20622", "Jun-22", indices_peaks$Date)
+indices_peaks$Date = gsub("11122", "Nov-22", indices_peaks$Date)
+indices_peaks$Date = gsub("21122", "Nov-22", indices_peaks$Date)
+
+#Make new column with just Station names
+indices_peaks$Elbe_km = indices_peaks$sample
+indices_peaks$Elbe_km = gsub("10721", "", indices_peaks$Elbe_km)
+indices_peaks$Elbe_km = gsub("20721", "", indices_peaks$Elbe_km)
+indices_peaks$Elbe_km = gsub("11121", "", indices_peaks$Elbe_km)
+indices_peaks$Elbe_km = gsub("10222", "", indices_peaks$Elbe_km)
+indices_peaks$Elbe_km = gsub("20222", "", indices_peaks$Elbe_km)
+indices_peaks$Elbe_km = gsub("10522", "", indices_peaks$Elbe_km)
+indices_peaks$Elbe_km = gsub("20522", "", indices_peaks$Elbe_km)
+indices_peaks$Elbe_km = gsub("10622", "", indices_peaks$Elbe_km)
+indices_peaks$Elbe_km = gsub("20622", "", indices_peaks$Elbe_km)
+indices_peaks$Elbe_km = gsub("11122", "", indices_peaks$Elbe_km)
+indices_peaks$Elbe_km = gsub("21122", "", indices_peaks$Elbe_km)
+#Replace station names with Elbe km
+indices_peaks$Elbe_km = gsub("muhl", 633, indices_peaks$Elbe_km)
+indices_peaks$Elbe_km = gsub("twie", 651, indices_peaks$Elbe_km)
+indices_peaks$Elbe_km = gsub("schw", 665, indices_peaks$Elbe_km)
+indices_peaks$Elbe_km = gsub("brun", 694, indices_peaks$Elbe_km)
+indices_peaks$Elbe_km = gsub("meed", 712, indices_peaks$Elbe_km)
+
+
+write.csv(indices_peaks, file = "C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/indices_peaks.csv", row.names = FALSE)
+
+#Convert to long format for easy plotting
+indices_peaks_long <- indices_peaks %>% gather(DOM_type, value, -c("sample","Date", "Elbe_km"))
+
+indices_peaks_long$DOM_type = gsub("^bix$", "BIX", indices_peaks_long$DOM_type)
+#indices_peaks_long$DOM_type = gsub("^a$", "Humic-like", indices_peaks_long$DOM_type)
+#indices_peaks_long$DOM_type = gsub("^b$", "Tyrosin-like", indices_peaks_long$DOM_type)
+#indices_peaks_long$DOM_type = gsub("^c$", "Humic-like", indices_peaks_long$DOM_type)
+indices_peaks_long$DOM_type = gsub("^fi$", "Fluorescence \nIndex", indices_peaks_long$DOM_type)
+indices_peaks_long$DOM_type = gsub("^hix$", "HIX", indices_peaks_long$DOM_type)
+#indices_peaks_long$DOM_type = gsub("^m$", "Marine-humic-like", indices_peaks_long$DOM_type)
+#indices_peaks_long$DOM_type = gsub("^t$", "Tryptophan-like", indices_peaks_long$DOM_type)
+indices_peaks_long$DOM_type = gsub("^REF$", "Relative \nFluorescence \nEfficiency", indices_peaks_long$DOM_type)
+#indices_peaks_long$DOM_type = gsub("freshness$", "Freshness", indices_peaks_long$DOM_type)
+
+
+indices_peaks_sum = Rmisc::summarySE(indices_peaks_long, measurevar = "value", groupvars = c("Elbe_km", "Date", "DOM_type"))
+
+indices_peaks_sum$Date = factor(indices_peaks_sum$Date,
+                                levels = c("Jul-21",
+                                           "Nov-21",
+                                           "Feb-22",
+                                           "May-22",
+                                           "Jun-22",
+                                           "Nov-22"))
+
+indices_peaks_sum = subset(indices_peaks_sum, Date!="Nov-21")
+
+unique(indices_peaks_long$DOM_type)
+indices_peaks_sum$DOM_type = factor(indices_peaks_sum$DOM_type,
+                                levels = c("a",
+                                           "b",
+                                           "c",
+                                           "t",
+                                           "m",
+                                           "BIX",
+                                        #   "Freshness",
+                                           "Fluorescence \nIndex",
+                                           "Relative \nFluorescence \nEfficiency",
+                                           "HIX"))
+
+test_mean = indices_peaks_sum %>% 
+  dplyr::group_by(DOM_type, Date) %>% 
+  dplyr::summarise(#sum_val = sum(Abundance),
+                   mean_val = mean(as.numeric(value)), 
+                   sd = sd(as.numeric(value)))
+print(test_mean)
+
+
+ggplot(data = indices_peaks_sum, aes(x = as.numeric(as.character(Elbe_km)), y = value, colour = Date, group = Date)) +
+  geom_line(size = 1)+
+  scale_color_manual(values = cbbPalette)+
+  facet_grid(. ~ DOM_type)+
+  My_Theme+
+  xlab("Elbe kilometer")+
+  scale_x_reverse()+
+  scale_y_log10()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+#tiff("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/Figures/DOM_peaks.tiff", units = "in", height = 6, width = 20, res = 120)
+#last_plot()
+#dev.off()
+
+
+ggplot(data = test_mean, aes(x = Date, y = mean_val, group = DOM_type)) +
+  geom_line(size = 1)+
+  scale_color_manual(values = cbbPalette)+
+  facet_grid(. ~ DOM_type)+
+  My_Theme+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+```{r}
+#Significance testing
+HIX.df = subset(indices_peaks_sum, DOM_type == "HIX")
+cor.test(as.numeric(HIX.df$value), as.numeric(HIX.df$Elbe_km), method = "s")
+
+a.df = subset(indices_peaks_sum, DOM_type == "a")
+cor.test(as.numeric(a.df$value), as.numeric(a.df$Elbe_km), method = "s")
+
+b.df = subset(indices_peaks_sum, DOM_type == "b")
+cor.test(as.numeric(b.df$value), as.numeric(b.df$Elbe_km), method = "s")
+
+BIX.df = subset(indices_peaks_sum, DOM_type == "BIX")
+cor.test(as.numeric(BIX.df$value), as.numeric(BIX.df$Elbe_km), method = "s")
+
+c.df = subset(indices_peaks_sum, DOM_type == "c")
+cor.test(as.numeric(c.df$value), as.numeric(c.df$Elbe_km), method = "s")
+
+FluorescenceIndex.df = subset(indices_peaks_sum, DOM_type == "Fluorescence \nIndex")
+cor.test(as.numeric(FluorescenceIndex.df$value), as.numeric(FluorescenceIndex.df$Elbe_km), method = "s")
+
+m.df = subset(indices_peaks_sum, DOM_type == "m")
+cor.test(as.numeric(m.df$value), as.numeric(m.df$Elbe_km), method = "s")
+
+t.df = subset(indices_peaks_sum, DOM_type == "t")
+cor.test(as.numeric(t.df$value), as.numeric(t.df$Elbe_km), method = "s")
+
+RFE.df = subset(indices_peaks_sum, DOM_type == "Relative \nFluorescence \nEfficiency")
+cor.test(as.numeric(RFE.df$value), as.numeric(RFE.df$Elbe_km), method = "s")
+
+
+```
+
+
+#Absorbance indices
+```{r}
+
+slope_parms <- abs_parms(absorbance, cuvl = 5, cores = cores)
+slope_parms
+
+
+
+#E2/E3= indicative of the Molecular weight and aromaticity of compounds (a high E2/E3 ratio is negatively correlated with MW and aromaticity)
+#E4/E6=indicative of degree of humification and aromaticity 
+#S275_295, S350_400 and S300_700 indicate spectral slopes show MW, aromaticity, sources. Typically higher S values indicate low molecular weight material and/or decreasing aromaticity
+#sR = spectral slope ratio used to indicate nonconservative processes e.g primary production and degration)
+###The following spectral parameters are calculated:
+
+##$S_275-295$ slope between 275 and 295 nm calculated with nonlinear regression. Can be used to trace the percent of terrigenous DOC in river-influenced ocean margins (https://aslopubs.onlinelibrary.wiley.com/doi/10.4319/lo.2012.57.5.1453)
+
+#$S_350-400$ slope between 350 and 400 nm calculated with nonlinear regression
+
+#$S_300-700$ slope between 300 and 700 nm calculated with nonlinear regression
+
+#SR slope ratio, calculated by $S_275-295$/$S_350-400$
+
+#E2:E3 ratio $a_250$/$a_365$
+
+#E4:E6 ratio $a_465$/$a_665$
+
+#$a_254$ absorbance at 254 nm - Detect organic matter in the water - Dobbs, Wise, and Dean (1972)
+
+#$a_300$ absorbance at 300 nm - indicator of CDOM levels https://www.sciencedirect.com/science/article/pii/S0272771418307212?casa_token=9igf5upMN5kAAAAA:4RwWUDV85PVSQQeMt7_GwsEe9fukIhJh8To9OZbDZ2tF3SKfjpdkusFWEG7b60Rmfo3v2N5O4w 
+
+#Make new column to differentiate Sample dates
+slope_parms$Date = substrRight(slope_parms$sample, 5)
+slope_parms$Date = gsub("10721", "Jul-21", slope_parms$Date)
+slope_parms$Date = gsub("20721", "Jul-21", slope_parms$Date)
+slope_parms$Date = gsub("11121", "Nov-21", slope_parms$Date)
+slope_parms$Date = gsub("10222", "Feb-22", slope_parms$Date)
+slope_parms$Date = gsub("20222", "Feb-22", slope_parms$Date)
+slope_parms$Date = gsub("10522", "May-22", slope_parms$Date)
+slope_parms$Date = gsub("20522", "May-22", slope_parms$Date)
+slope_parms$Date = gsub("10622", "Jun-22", slope_parms$Date)
+slope_parms$Date = gsub("20622", "Jun-22", slope_parms$Date)
+slope_parms$Date = gsub("11122", "Nov-22", slope_parms$Date)
+slope_parms$Date = gsub("21122", "Nov-22", slope_parms$Date)
+
+#Make new column with just Station names
+slope_parms$Elbe_km = slope_parms$sample
+slope_parms$Elbe_km = gsub("10721", "", slope_parms$Elbe_km)
+slope_parms$Elbe_km = gsub("20721", "", slope_parms$Elbe_km)
+slope_parms$Elbe_km = gsub("11121", "", slope_parms$Elbe_km)
+slope_parms$Elbe_km = gsub("10222", "", slope_parms$Elbe_km)
+slope_parms$Elbe_km = gsub("20222", "", slope_parms$Elbe_km)
+slope_parms$Elbe_km = gsub("10522", "", slope_parms$Elbe_km)
+slope_parms$Elbe_km = gsub("20522", "", slope_parms$Elbe_km)
+slope_parms$Elbe_km = gsub("10622", "", slope_parms$Elbe_km)
+slope_parms$Elbe_km = gsub("20622", "", slope_parms$Elbe_km)
+slope_parms$Elbe_km = gsub("11122", "", slope_parms$Elbe_km)
+slope_parms$Elbe_km = gsub("21122", "", slope_parms$Elbe_km)
+
+#Replace station names with Elbe km
+slope_parms$Elbe_km = gsub("muhl", 633, slope_parms$Elbe_km)
+slope_parms$Elbe_km = gsub("twie", 651, slope_parms$Elbe_km)
+slope_parms$Elbe_km = gsub("schw", 665, slope_parms$Elbe_km)
+slope_parms$Elbe_km = gsub("brun", 694, slope_parms$Elbe_km)
+slope_parms$Elbe_km = gsub("meed", 712, slope_parms$Elbe_km)
+
+write.csv(slope_parms, file = "C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/absorbance_slopes.csv", row.names = FALSE)
+
+
+#Convert to long format for easy plotting
+slope_parms_long <- slope_parms %>% gather(DOM_type, value, -c("sample","Date", "Elbe_km"))
+
+slope_parms_long$DOM_type = gsub("E2_E3", "neg_MW_aromaticity", slope_parms_long$DOM_type)
+#E2/E3= indicative of the Molecular weight and aromaticity of compounds (A high E2/E3 ratio is negatively correlated with MW and aromaticity)
+slope_parms_long$DOM_type = gsub("a254", "Absorbance at 254 nm", slope_parms_long$DOM_type)
+slope_parms_long$DOM_type = gsub("a300", "Absorbance at 300 nm", slope_parms_long$DOM_type)
+slope_parms_long$DOM_type = gsub("E4_E6", "Degree of humification \nand aromaticity", slope_parms_long$DOM_type)
+#E4/E6=indicative of degree of humification and aromaticity 
+slope_parms_long$DOM_type = gsub("S275_295", "Slope between 275 and 295 nm", slope_parms_long$DOM_type)
+slope_parms_long$DOM_type = gsub("S350_400", "Slope between 350 and 400 nm", slope_parms_long$DOM_type)
+slope_parms_long$DOM_type = gsub("S300_700", "Slope between 300 and 700 nm", slope_parms_long$DOM_type)
+#S275_295, S350_400 and S300_700 indicate spectral slopes show MW, aromaticity, sources
+slope_parms_long$DOM_type = gsub("SR", "Slope Ratio", slope_parms_long$DOM_type)
+#sR = spectral slope ratio used to indicate nonconservative processes e.g primary production and degradation)
+
+
+
+slope_parms_sum = Rmisc::summarySE(slope_parms_long, measurevar = "value", groupvars = c("Elbe_km", "Date", "DOM_type"))
+
+slope_parms_sum$Date = factor(slope_parms_sum$Date,
+                                levels = c("Jul-21",
+                                           "Nov-21",
+                                           "Feb-22",
+                                           "May-22",
+                                           "Jun-22",
+                                           "Nov-22"))
+
+slope_parms_sum = subset(slope_parms_sum, Date!="Nov-21")
+
+test_mean = slope_parms_sum %>% 
+  dplyr::group_by(DOM_type, Date) %>% 
+  dplyr::summarise(#sum_val = sum(Abundance),
+                   mean_val = mean(as.numeric(value)), 
+                   sd = sd(as.numeric(value)))
+print(test_mean)
+
+Slopesonly = subset(slope_parms_sum, DOM_type == "Slope between 275 and 295 nm"| DOM_type == "Slope between 300 and 700 nm"| DOM_type == "Slope between 350 and 400 nm"| DOM_type == "Slope Ratio")
+
+Indicesonly = subset(slope_parms_sum, DOM_type == "Absorbance at 254 nm"| DOM_type == "Absorbance at 300 nm"| DOM_type == "Degree of humification \nand aromaticity"| DOM_type == "neg_MW_aromaticity")
+
+
+ggplot(data = Slopesonly, aes(x = as.numeric(as.character(Elbe_km)), y = value, colour = Date, group = Date)) +
+  geom_line(size = 1)+
+  scale_color_manual(values = cbbPalette)+
+  scale_y_log10()+
+  facet_grid(. ~ DOM_type)+
+  My_Theme+
+  xlab("Elbe kilometer")+
+  scale_x_reverse()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+#tiff("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/Figures/DOM_slopes1.tiff", units = "in", height = 10, width = 20, res = 120)
+#last_plot()
+#dev.off()
+
+ggplot(data = subset(Indicesonly, DOM_type!='Degree of humification \nand aromaticity'), aes(x = as.numeric(as.character(Elbe_km)), y = value, colour = Date, group = Date)) +
+  geom_line(size = 1)+
+  scale_color_manual(values = cbbPalette)+
+  scale_y_log10()+
+  facet_grid(. ~ DOM_type)+
+  My_Theme+
+  xlab("Elbe kilometer")+
+  scale_x_reverse()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+#tiff("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/Figures/DOM_slopes2.tiff", units = "in", height = 10, width = 20, res = 120)
+#last_plot()
+#dev.off()
+
+ggplot(data = subset(Indicesonly, DOM_type=='Degree of humification \nand aromaticity'), aes(x = as.numeric(as.character(Elbe_km)), y = value, colour = Date, group = Date)) +
+  geom_line(size = 1)+
+  scale_color_manual(values = cbbPalette)+
+  #scale_y_log10()+
+  facet_grid(. ~ DOM_type)+
+  My_Theme+
+  xlab("Elbe kilometer")+
+  scale_x_reverse()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+#tiff("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/Figures/DOM_slopes3.tiff", units = "in", height = 10, width = 20, res = 120)
+#last_plot()
+#dev.off()
+
+```
+
+```{r}
+#Significance testing
+A254.df = subset(slope_parms_sum, DOM_type == "Absorbance at 254 nm")
+cor.test(as.numeric(A254.df$value), as.numeric(A254.df$Elbe_km), method = "s")
+
+A300.df = subset(slope_parms_sum, DOM_type == "Absorbance at 300 nm")
+cor.test(as.numeric(A300.df$value), as.numeric(A300.df$Elbe_km), method = "s")
+
+DHA.df = subset(slope_parms_sum, DOM_type == "Degree of humification \nand aromaticity")
+cor.test(as.numeric(DHA.df$value), as.numeric(DHA.df$Elbe_km), method = "s")
+
+negMWA.df = subset(slope_parms_sum, DOM_type == "neg_MW_aromaticity")
+cor.test(as.numeric(negMWA.df$value), as.numeric(negMWA.df$Elbe_km), method = "s")
+
+S275_295.df = subset(slope_parms_sum, DOM_type == "Slope between 275 and 295 nm")
+cor.test(as.numeric(S275_295.df$value), as.numeric(S275_295.df$Elbe_km), method = "s")
+
+S300_700.df = subset(slope_parms_sum, DOM_type == "Slope between 300 and 700 nm")
+cor.test(as.numeric(S300_700.df$value), as.numeric(S300_700.df$Elbe_km), method = "s")
+
+S350_400.df = subset(slope_parms_sum, DOM_type == "Slope between 350 and 400 nm")
+cor.test(as.numeric(S350_400.df$value), as.numeric(S350_400.df$Elbe_km), method = "s")
+
+SR.df = subset(slope_parms_sum, DOM_type == "Slope Ratio")
+cor.test(as.numeric(SR.df$value), as.numeric(SR.df$Elbe_km), method = "s")
+
+
+
+#create a new variable for Elbekm2
+slope_parms$Elbekm2 = as.numeric(slope_parms$Elbe_km)^2
+slope_parms$Elbe_km = as.numeric(slope_parms$Elbe_km)
+
+#fit quadratic regression model
+quadraticModel <- lm(a254 ~ Elbe_km + Elbekm2, data=slope_parms)
+#view model summary
+summary(quadraticModel)
+
+#fit quadratic regression model
+quadraticModel <- lm(a300 ~ Elbe_km + Elbekm2, data=slope_parms)
+#view model summary
+summary(quadraticModel)
+
+#fit quadratic regression model
+quadraticModel <- lm(E2_E3 ~ Elbe_km + Elbekm2, data=slope_parms)
+#view model summary
+summary(quadraticModel)
+
+#fit quadratic regression model
+quadraticModel <- lm(E4_E6 ~ Elbe_km + Elbekm2, data=slope_parms)
+#view model summary
+summary(quadraticModel)
+
+#fit quadratic regression model
+quadraticModel <- lm(S275_295 ~ Elbe_km + Elbekm2, data=slope_parms)
+#view model summary
+summary(quadraticModel)
+
+#fit quadratic regression model
+quadraticModel <- lm(S350_400 ~ Elbe_km + Elbekm2, data=slope_parms)
+#view model summary
+summary(quadraticModel)
+
+#fit quadratic regression model
+quadraticModel <- lm(S300_700 ~ Elbe_km + Elbekm2, data=slope_parms)
+#view model summary
+summary(quadraticModel)
+
+#fit quadratic regression model
+quadraticModel <- lm(SR ~ Elbe_km + Elbekm2, data=slope_parms)
+#view model summary
+summary(quadraticModel)
+
+```
+#Create a PARAFAC model
+##Example data and loading from multiple EEM runs
+```{r}
+
+eem_list_BU = eem_list
+
+dreem_raw <- tempfile()
+download.file("http://models.life.ku.dk/sites/default/files/drEEM_dataset.zip",dreem_raw)
+dreem_data <- unz(dreem_raw, filename="Backup/PortSurveyData_corrected.mat", open = "rb") %>%
+  R.matlab::readMat()
+unlink(dreem_raw)
+
+eem_list_example <- lapply(dreem_data$filelist.eem, function(file){
+  #file <- dreem_data$filelist.eem[1]
+  n <- which(dreem_data$filelist.eem == file)
+  file <- file %>%
+    gsub("^\\s+|\\s+$", "", .) %>% # trim white spaces in filenames
+    sub(pattern = "(.*)\\..*$", replacement = "\\1", .) # remove file extension from sample name
+  eem <- list(file = paste0("drEEM/dataset/",file),sample = file,x = dreem_data$XcRU[n,,] %>% as.matrix(),ex = dreem_data$Ex %>% as.vector(), em = dreem_data$Em.in %>% as.vector(), location = "drEEM/dataset/")
+  class(eem) <- "eem"
+  attr(eem, "is_blank_corrected") <- TRUE
+  attr(eem, "is_scatter_corrected") <- FALSE
+  attr(eem, "is_ife_corrected") <- TRUE
+  attr(eem, "is_raman_normalized") <- TRUE
+  attr(eem, "manufacturer") <- "unknown"
+  eem
+}) %>%
+  `class<-`("eemlist")
+
+ol <- function(x){x==("bl") | x == "0A"}
+extract <- dreem_data$sites %>% unlist() %>% ol() %>% which()
+eem_list_example <- eem_list_example %>% eem_extract(extract)
+
+eem_list_example <- eem_rem_scat(eem_list_example, remove_scatter = c(TRUE, TRUE, TRUE, TRUE), remove_scatter_width = c(15,15,18,19), interpolation = FALSE, cores = cores)
+
+```
+
+If you have worked with the basic analysis template, you can use the resulting data right away. In the case you did the corrections with different sample sets separately and want to combine them, you can use eem_import_dir to combine EEM samples from several RData or RDa files. Put all files in one folder and run the following:
+
+eem_list <- eem_import_dir(dir)
+
+We recommend using eem_checkdata again before continuing the further analysis!
+
+
+##Find and remove EEM data noise 
+
+eem_extract removes whole samples either by name or by number.
+
+eem_range removes data outside the given wavelength ranges in all samples.
+
+eem_exclude removes data from the sample set, provided by a list.
+
+eem_rem_scat and eem_remove_scattering are used to set data in Raman and Rayleigh scattering of 1st and 2nd order to NA. While the later on removes one scattering at a time, the first one wraps it up to remove several scatterings in one step.
+
+eem_setNA replaces data by NA in rectangular shape and in specific samples.
+
+eem_matmult multiplies each EEM matrix by a certain matrix. This matrix can be used to set parts of the data to 0 or NA (e.g. the area where emission wavelength is shorter than excitation wavelength).
+
+eem_interp is used to interpolate data previously set to NA.
+
+```{r}
+
+#eem_overview_plot(eem_list_example, spp = 9, contour = TRUE)
+eem_overview_plot(eem_list, spp=49, contour = TRUE)
+
+#eem_list_example %>% 
+ # eem_extract(sample = "^d667sf$", keep = TRUE) %>%
+  #ggeem(contour = TRUE)
+
+#Remove noisy range of data
+eem_list <- eem_list %>% eem_range(ex = c(250,Inf), em = c(0,580))
+eem_overview_plot(eem_list, spp=49, contour = TRUE)
+
+```
+##Explore dataset
+The goal is to find a global minimum of the residual function. 
+
+The model with the smallest error is then used for further analyses, assuming it is a global minimum. 25 might by a good start for nstart although for a profound analysis higher values (e.g. 50) are suggested.
+
+eem_parafac returns a warning in case of less than 50 % converging models.
+
+Higher maxit (maximum number of iteration steps in PARAFAC) and lower ctol (tolerance to return result of PARAFAC, should not be larger than 10⁻⁶) increase the accuracy of the model but take more computation time. For a final model, we suggest to use a tolerance of 10⁻⁸ to 10⁻¹⁰.
+
+While pf1 is calculated without any constraints, pf1n uses the assumption that modes are non-negative only (as fluorescence cannot be negative).
+Common constraints are none (“uncons”), non-negative (“nonneg”) and unimodal, non-negative (“uninon”). Besides these, other possible constraints can be seen using the command CMLS::const().
+```{r}
+set.seed(2)
+date()
+# minimum and maximum of numbers of components
+dim_min <- 3
+dim_max <- 7
+
+nstart <- 50 # number of similar models from which best is chosen
+maxit = 5000 # maximum number of iterations in PARAFAC analysis
+ctol <- 10^-6 # tolerance in PARAFAC analysis
+
+# calculating PARAFAC models, one for each number of components
+#pf1 <- eem_parafac(eem_list, comps = seq(dim_min,dim_max), normalise = FALSE, const = c("uncons", "uncons", "uncons"), maxit = maxit, nstart = nstart, ctol = ctol, cores = cores)
+
+# same model but using non-negative constraints
+pf1n <- eem_parafac(eem_list, comps = seq(dim_min,dim_max), normalise = FALSE, const = c("nonneg", "nonneg", "nonneg"), maxit = maxit, nstart = nstart, ctol = ctol, cores = cores, output = "all")
+
+
+#Extract fmax
+#testnf = attr(pf1n, "norm_factors")
+#testcomp <- ncol(pf1n$A)
+
+#testBmax <- pf1n[[1]]$B %>% abs() %>% matrixStats::colMaxs() # Emission max
+#testCmax <- pf1n[[1]]$C %>% abs() %>% matrixStats::colMaxs() # Excitation max
+
+
+# rescale B and C modes to a maximum fluorescence of 1 for each component
+#pf1 <- lapply(pf1, eempf_rescaleBC, newscale = "Fmax")
+pf1n <- lapply(pf1n, eempf_rescaleBC, newscale = "Fmax")
+
+# This plot is not shown, because the components violate the assumptions for fluorescence peaks (negative fluorescence). Please try, if you are interested.
+#eempf_compare(pf1, contour = TRUE)
+eempf_compare(pf1n, contour = TRUE)
+pf1n_plots = eempf_compare(pf1n, contour = TRUE)
+pf1n_plots[[1]][["data"]][["fit"]]
+beep(sound = 2)
+date()
+#pf1n_nice = pf1n
+#pf1n_nice_50 = pf1n
+
+eempf_residuals_plot(pf1n[[1]], eem_list, residuals_only = TRUE, spp = 49, cores = cores, contour = TRUE, colpal = "rainbow")#seems to still have one or two areas of residuals, residual fluorescence is 3x that of the others
+eempf_residuals_plot(pf1n[[2]], eem_list, residuals_only = TRUE, spp = 49, cores = cores, contour = TRUE, colpal = "rainbow") # 4 factors looks worse than 3 factors, with two close peaks/troughs near each other in the majority of residual plots
+eempf_residuals_plot(pf1n[[3]], eem_list, residuals_only = TRUE, spp = 49, cores = cores, contour = TRUE, colpal = "rainbow") # 5 factors Some samples still show multiple residual areas, although fluorescence isn't super high, has quite a bit of scatter, not all models converged
+eempf_residuals_plot(pf1n[[4]], eem_list, residuals_only = TRUE, spp = 49, cores = cores, contour = TRUE, colpal = "rainbow") # 6 components - only 3 models converged
+eempf_residuals_plot(pf1n[[5]], eem_list, residuals_only = TRUE, spp = 49, cores = cores, contour = TRUE, colpal = "rainbow") # 7 components - only 2 models converged
+
+
+eempf_convergence(pf1n[[1]])
+eempf_convergence(pf1n[[2]])
+eempf_convergence(pf1n[[3]])
+eempf_convergence(pf1n[[4]])
+eempf_convergence(pf1n[[5]])
+```
+##Check for component correlations
+```{r}
+
+# check for correlation between components table
+eempf_cortable(pf1n[[3]], normalisation = FALSE)
+
+eempf_corplot(pf1n[[3]], progress = FALSE, normalisation = FALSE)
+
+#As some components are very correlated, we recalculate the model with normalised data. This is automatically reversed later my multiplying the A modes (samples loadings) with the normalisation factors for exports and plots. Normalisation must be set to FALSE to assess model quality, but TRUE for interpretation and pattern assessment to see actual values.
+pf2 <- eem_parafac(eem_list, comps = seq(dim_min,dim_max), normalise = TRUE, const = c("nonneg", "nonneg", "nonneg"), maxit = maxit, nstart = nstart, ctol = ctol, cores = cores)
+
+# rescale B and C modes
+pf2 <- lapply(pf2, eempf_rescaleBC, newscale = "Fmax")
+
+pf2_plots = eempf_compare(pf2, contour = TRUE) # use this to show the same plot as above
+pf2_plots
+eempf_plot_comps(pf2, contour = TRUE, type = 1)# for now, we are happy with just the components
+pf2_plots[[1]][["data"]][["fit"]]
+
+beep(sound = 2)
+
+```
+##Find and exclude outliers leverage
+
+```{r}
+
+# calculate leverage
+cpl <- eempf_leverage(pf2[[3]]) # This uses the 3 way parafac with 4 components
+
+# plot leverage (nice plot)
+eempf_leverage_plot(cpl, qlabel=0.1)
+
+
+# plot leverage, not so nice plot but interactive to select what to exclude
+# saved in exclude, can be used to start over again with eem_list_ex <- eem_list %>% eem_exclude(exclude) above
+#exclude <- eempf_leverage_ident(cpl,qlabel=0.1)
+
+# samples, excitation and emission wavelengths to exclude, makes sense after calculation of leverage
+exclude <- list("em" = c(),
+                "ex" = c(220),
+                "sample" = c())
+
+# exclude outliers if neccessary. if so, restart analysis
+eem_list_ex <- eem_exclude(eem_list, exclude)
+#Excluded Schw11121 as it was a clear outlier sample in the leverage plot
+
+pf3 <- eem_parafac(eem_list_ex, comps = seq(dim_min,dim_max), normalise = TRUE, maxit = maxit, nstart = nstart, ctol = ctol, cores = cores, output = "all")
+pf3 <- lapply(pf3, eempf_rescaleBC, newscale = "Fmax")
+pf3_plots = eempf_compare(pf3, contour = TRUE)
+
+#eempf_plot_comps(pf3, contour = TRUE)
+
+#pf3_plots[[4]][["data"]][["fit"]]
+
+eempf_convergence(pf3[[1]])
+eempf_convergence(pf3[[2]])
+eempf_convergence(pf3[[3]])
+eempf_convergence(pf3[[4]])
+eempf_convergence(pf3[[5]])
+
+
+eempf_residuals_plot(pf3[[1]], eem_list, residuals_only = TRUE, spp = 49, cores = cores, contour = TRUE, colpal = "rainbow")
+eempf_residuals_plot(pf3[[2]], eem_list, residuals_only = TRUE, spp = 49, cores = cores, contour = TRUE, colpal = "rainbow") 
+eempf_residuals_plot(pf3[[3]], eem_list, residuals_only = TRUE, spp = 49, cores = cores, contour = TRUE, colpal = "rainbow") 
+eempf_residuals_plot(pf3[[4]], eem_list, residuals_only = TRUE, spp = 49, cores = cores, contour = TRUE, colpal = "rainbow") 
+eempf_residuals_plot(pf3[[5]], eem_list, residuals_only = TRUE, spp = 49, cores = cores, contour = TRUE, colpal = "rainbow") 
+
+eempf_leverage_plot(eempf_leverage(pf3[[1]]),qlabel=0.1)
+eempf_leverage_plot(eempf_leverage(pf3[[2]]),qlabel=0.1)
+eempf_leverage_plot(eempf_leverage(pf3[[3]]),qlabel=0.1)
+eempf_leverage_plot(eempf_leverage(pf3[[4]]),qlabel=0.1)
+
+beep(sound = 2)
+```
+##Examine residuals
+The outliers determined above are included to show the difference in residuals. Analysing these residuals can show deficits in model creation, problems with sample handling and lab equipment, or it can already be helpful in answering scientific questions.
+```{r}
+
+eempf_residuals_plot(pf3[[3]], eem_list, residuals_only = TRUE, spp = 49, cores = cores, contour = TRUE, colpal = "rainbow")
+## Removed sample(s): none, as none seem to too different from each other, and only one sample has two peaks/troughs next to each other
+
+
+```
+##Recalculating the model with increased accuracy
+
+Due to long calculation times with higher accuracy in the model calculation, the tolerance is only increased in the last step. Just the model with 6 components is recalculated. We use strictly_converging = TRUE here to derive a meaningful number of truly converging models. If you set this argument to FALSE, please check the ratio of converging models to be sure, the best is chosen from a reasonably high number.
+
+```{r}
+ctol <- 10^-8 # decrease tolerance in PARAFAC analysis
+nstart = 50 # number of random starts
+maxit = 10000 # increase number of maximum iterations
+
+pf4 <- eem_parafac(eem_list_ex, comps = c(3, 4, 5), normalise = TRUE, const = c("nonneg", "nonneg", "nonneg"), maxit = maxit, nstart = nstart, ctol = ctol, output = "all", cores = cores, strictly_converging = TRUE)
+#pf4_RawBU = pf4
+#pf4_BU = pf4
+#pf4 = pf4_BU
+pf4 <- lapply(pf4, eempf_rescaleBC)
+#pf4[[1]]$B
+
+#Extract fmax
+#testnf = attr(pf4, "norm_factors")
+#testcomp <- ncol(pf4$A)
+
+#testBmax <- pf4[[1]]$B %>% abs() %>% matrixStats::colMaxs() # Emission max
+#testCmax <- pf4[[1]]$C %>% abs() %>% matrixStats::colMaxs() # Excitation max
+
+
+pf4_plots = eempf_compare(pf4, contour = TRUE)
+pf4_plots[[1]][["data"]][["fit"]]
+
+#What is the convergence behaviour of the new model like?
+eempf_convergence(pf4[[1]])
+eempf_convergence(pf4[[2]])
+#SSE = a measure of the discrepancy between the data and an estimation model. A small SSE indicates a tight fit of the model to the data.
+
+# just one model, not really a need to compare
+eempf_compare(pf4, contour = TRUE)
+
+eempf_residuals_plot(pf4[[1]], eem_list, residuals_only = TRUE, spp = 49, cores = cores, contour = TRUE, colpal = "rainbow")
+eempf_residuals_plot(pf4[[2]], eem_list, residuals_only = TRUE, spp = 49, cores = cores, contour = TRUE, colpal = "rainbow")
+
+beepr::beep(sound = 2)
+```
+
+###If starting with a rough  model and refining it
+```{r}
+# calculating a rough model, nstart is high (100) but ctol is 2 magnitudes larger or at least 0.01
+pf5 <- eem_parafac(eem_list, comps = 3, normalise = TRUE, const = c("nonneg", "nonneg", "nonneg"), maxit = maxit, nstart = 100, ctol = min(ctol*100,0.01), cores = cores)
+
+# plot is not shown
+ggeem(pf5[[1]], contour = TRUE)
+
+nstart <- 100
+pf4 <- eem_parafac(eem_list, comps = 3, normalise = TRUE, const = c("nonneg", "nonneg", "nonneg"), maxit = maxit, nstart = nstart, ctol = ctol, cores = cores, Bstart = pf5[[1]]$B, Cstart = pf5[[1]]$C)
+
+
+pf4 <- lapply(pf4, eempf_rescaleBC, newscale = "Fmax")
+
+# plot is not shown
+ggeem(pf4[[1]], contour = TRUE)
+
+```
+#Plot identified components and loadings
+```{r}
+
+eempf_comp_load_plot(pf4[[2]], contour = TRUE)
+pf4[[2]]
+#pf4 = pf4_RawBU
+#pf4 = pf4_BU
+#Extract dataframe
+intensity.df = eempf_comp_load_plot(pf4[[2]], contour = TRUE)[[2]]$data
+
+#write.csv(intensity.df, "Intensity_df.csv")
+
+
+#Make new column to differentiate Sample dates
+intensity.df$Date = substrRight(intensity.df$sample, 5)
+intensity.df$Date = gsub("10721", "Jul-21", intensity.df$Date)
+intensity.df$Date = gsub("20721", "Jul-21", intensity.df$Date)
+intensity.df$Date = gsub("11121", "Nov-21", intensity.df$Date)
+intensity.df$Date = gsub("10222", "Feb-22", intensity.df$Date)
+intensity.df$Date = gsub("20222", "Feb-22", intensity.df$Date)
+intensity.df$Date = gsub("10522", "May-22", intensity.df$Date)
+intensity.df$Date = gsub("20522", "May-22", intensity.df$Date)
+intensity.df$Date = gsub("10622", "Jun-22", intensity.df$Date)
+intensity.df$Date = gsub("20622", "Jun-22", intensity.df$Date)
+intensity.df$Date = gsub("11122", "Nov-22", intensity.df$Date)
+intensity.df$Date = gsub("21122", "Nov-22", intensity.df$Date)
+
+#Make new column with just Station names
+intensity.df$Elbe_km = intensity.df$sample
+intensity.df$Elbe_km = gsub("10721", "", intensity.df$Elbe_km)
+intensity.df$Elbe_km = gsub("20721", "", intensity.df$Elbe_km)
+intensity.df$Elbe_km = gsub("11121", "", intensity.df$Elbe_km)
+intensity.df$Elbe_km = gsub("10222", "", intensity.df$Elbe_km)
+intensity.df$Elbe_km = gsub("20222", "", intensity.df$Elbe_km)
+intensity.df$Elbe_km = gsub("10522", "", intensity.df$Elbe_km)
+intensity.df$Elbe_km = gsub("20522", "", intensity.df$Elbe_km)
+intensity.df$Elbe_km = gsub("10622", "", intensity.df$Elbe_km)
+intensity.df$Elbe_km = gsub("20622", "", intensity.df$Elbe_km)
+intensity.df$Elbe_km = gsub("11122", "", intensity.df$Elbe_km)
+intensity.df$Elbe_km = gsub("21122", "", intensity.df$Elbe_km)
+#Replace station names with Elbe km
+intensity.df$Elbe_km = gsub("muhl", 633, intensity.df$Elbe_km)
+intensity.df$Elbe_km = gsub("twie", 651, intensity.df$Elbe_km)
+intensity.df$Elbe_km = gsub("schw", 665, intensity.df$Elbe_km)
+intensity.df$Elbe_km = gsub("brun", 694, intensity.df$Elbe_km)
+intensity.df$Elbe_km = gsub("meed", 712, intensity.df$Elbe_km)
+
+
+#Summarise for plot
+intensity.df_sum = Rmisc::summarySE(intensity.df, measurevar = "amount", groupvars = c("Elbe_km", "Date", "comp"))
+
+intensity.df_sum$Date = factor(intensity.df_sum$Date,
+                                levels = c("Jul-21",
+                                           "Nov-21",
+                                           "Feb-22",
+                                           "May-22",
+                                           "Jun-22",
+                                           "Nov-22"))
+
+intensity.df_sum = subset(intensity.df_sum, Date!="Nov-21")
+
+test_mean = intensity.df_sum %>% 
+  dplyr::group_by(comp, Date) %>% 
+  dplyr::summarise(mean_val = mean(as.numeric(amount)), 
+                   sd = sd(as.numeric(amount)))
+print(test_mean)
+
+intensity.df_sum$Station = factor(intensity.df_sum$Station,
+                             levels = c("Meedem Grund", 
+                                        "Brunsbüttel",
+                                        "Schwarztonnensand",
+                                        "Twielenfleth",
+                                        "Mühlenberger Loch"))
+
+ggplot(data = intensity.df_sum, 
+       aes(x = as.numeric(Elbe_km), 
+           y = (amount / max(amount)),
+           colour = comp,
+           group = comp))+
+  geom_point(size = 1)+
+  geom_line(size = 1)+
+  facet_grid(Date ~ .)+
+  ylab("Component intensity set to \nmaximum component value")+
+  scale_color_manual("Components", values = cbbPalette)+
+  My_Theme+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  scale_x_reverse()
+
+
+tiff("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/Figures/Intensity.tiff", units = "in", width = 7, height = 6, res = 120)
+last_plot()
+dev.off()
+
+#For relative abundances to max intensity
+
+intensity_wide.df = reshape(intensity.df, idvar = c("sample", "Date", "Elbe_km"), timevar = "comp", direction = "wide")
+
+intensity_wide.df$sum = rowSums(intensity_wide.df[,c(4:7)])
+
+intensity_long.df = melt(intensity_wide.df, id.vars = c("sample", "Elbe_km", "Date", "sum"))
+
+intensity_long.df$RelativeContribution = intensity_long.df$value / intensity_long.df$sum
+
+
+intensity_long_sum.df = Rmisc::summarySE(data = intensity_long.df, 
+                                         measurevar = "RelativeContribution", 
+                                         groupvars = c("Elbe_km",
+                                                       "Date",
+                                                       "variable"))
+
+#intensity_long_sum.df$Station = factor(intensity_long_sum.df$Station,
+ #                            levels = c("Meedem Grund", 
+  #                                      "Brunsbüttel",
+   #                                     "Schwarztonnensand",
+    #                                    "Twielenfleth",
+     #                                   "Mühlenberger Loch"))
+
+
+intensity_long_sum.df$Date = factor(intensity_long_sum.df$Date,
+                                levels = c("Jul-21",
+                                           "Nov-21",
+                                           "Feb-22",
+                                           "May-22",
+                                           "Jun-22",
+                                           "Nov-22"))
+
+intensity_long_sum.df = subset(intensity_long_sum.df, Date!="Nov-21")
+
+test_mean = intensity_long_sum.df %>% 
+  dplyr::group_by(variable, Date) %>% 
+  dplyr::summarise(mean_val = mean(as.numeric(RelativeContribution)), 
+                   sd = sd(as.numeric(RelativeContribution)))
+print(test_mean)
+
+ggplot(data = test_mean, 
+       aes(x = Date, 
+           y = mean_val*100,
+           colour = variable,
+           group = variable))+
+  geom_point(size = 1)+
+  geom_line(size = 1)+
+  ylab("Mean component contribution \nto total fluorescence (%)")+
+  scale_color_manual("Components", values = cbbPalette)+
+  My_Theme+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+intensity_long_sum.df$variable = gsub("amount.Comp.1", "Marine/Humic-like", intensity_long_sum.df$variable)
+intensity_long_sum.df$variable = gsub("amount.Comp.2", "Terrestial/Humic-like", intensity_long_sum.df$variable)
+intensity_long_sum.df$variable = gsub("amount.Comp.3", "Tryptophan-like", intensity_long_sum.df$variable)
+intensity_long_sum.df$variable = gsub("amount.Comp.4", "Tyrosine/Petroleum-like", intensity_long_sum.df$variable)
+
+
+ggplot(data = subset(intensity_long_sum.df, Date!="Jul-21"), 
+       aes(x = as.numeric(Elbe_km), 
+           y = RelativeContribution*100,
+           colour = variable,
+           group = variable))+
+  geom_point(size = 1)+
+  geom_line(size = 1)+
+  facet_grid(Date ~ .)+
+  xlab("Elbe kilometer")+
+  ylab("Component contribution to \ntotal fluorescence (%)")+
+  scale_color_manual("Components", values = cbbPalette)+
+  My_Theme+
+  #theme(panel.background = element_rect(fill = '#eff1f2'),
+   #     legend.key = element_rect(fill = "#eff1f2"),
+    #    plot.background = element_rect(fill = "#eff1f2"),
+     #   legend.background = element_rect(fill = "#eff1f2"))+
+  scale_x_reverse()+
+  scale_y_continuous(breaks = c(0, 20, 40))
+
+tiff("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/ParticleAnalysis/Poster/RelativeDOMIntensity.tiff", units = "cm", width = 24, height = 18, res = 120)
+last_plot()
+dev.off()
+
+stats.sum = intensity_long_sum.df %>%
+  group_by(variable) %>%
+  dplyr::summarise(mean_val = mean(RelativeContribution))
+stats.sum
+
+stats.mod = aov(RelativeContribution ~ Date * variable, data = intensity_long_sum.df)
+summary(stats.mod)
+rstatix::eta_squared(stats.mod)
+
+cor.test(subset(intensity_long_sum.df, variable == "amount.Comp.1")$RelativeContribution, subset(intensity_long_sum.df, variable == "amount.Comp.2")$RelativeContribution, method = "s")
+
+```
+```{r Quadratic PARAFAC component analysis}
+
+
+
+#create a new variable for Elbekm2
+intensity_long_sum.df$Elbekm2 = as.numeric(intensity_long_sum.df$Elbe_km)^2
+intensity_long_sum.df$Elbe_km = as.numeric(intensity_long_sum.df$Elbe_km)
+
+#fit quadratic regression model
+quadraticModel <- lm(RelativeContribution ~ Elbe_km + Elbekm2, data=subset(intensity_long_sum.df, variable == "Tyrosine/Petroleum-like"))
+#view model summary
+summary(quadraticModel)
+
+
+```
+
+##Plotting samples and residuals
+
+```{r}
+
+# plot components in each sample, residual and whole sample
+picture.plt = eempf_residuals_plot(pf4[[1]], eem_list_ex, select = eem_names(eem_list_ex), cores = cores, contour = TRUE)
+
+#Save plot
+pdf("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/Figures/Model4CompResid.pdf", width = 12, height = 8)
+picture.plt
+dev.off()
+
+
+
+
+# plot components in each sample, residual and whole sample
+single.plt = eempf_residuals_plot(pf4[[1]], eem_list_ex, select = "twie21122", cores = cores, contour = TRUE)
+
+#Save plot
+pdf("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/ParticleAnalysis/Poster/EEM_SampleCompResidual.pdf", width = 4, height = 4)
+single.plt
+dev.off()
+
+```
+##Split-half analysis
+Assess model stability
+
+The 4 component Model does not seem to be stable, unlike the three component model.
+
+However, the 4 component model has a lower SSE score compared to the 3 component model.
+
+Due to the low sample number (21) I would therefore be leery of using this in a final analysis and would instead take at least one more round of samples to ensure that model instability is not due to low sample numbers.
+```{r}
+
+#calculate split_half analysis
+#sh4 <- splithalf(eem_list_ex, comps = 4, normalise = TRUE, rand = FALSE, cores = cores, nstart = nstart, strictly_converging = TRUE, maxit = maxit, ctol = ctol)
+#splithalf_plot(sh4)
+#sh5 <- splithalf(eem_list_ex, comps = 5, normalise = TRUE, rand = FALSE, cores = cores, nstart = nstart, strictly_converging = TRUE, maxit = maxit, ctol = ctol)
+#splithalf_plot(sh5)
+#sh6 <- splithalf(eem_list_ex, comps = 6, normalise = TRUE, rand = FALSE, cores = cores, nstart = nstart, strictly_converging = TRUE, maxit = maxit, ctol = ctol)
+#splithalf_plot(sh6)
+#Plots look slightly similar, but also seem to have differences, so best to do random splits. Especially as there seem to be distinct groupings in the splits rather than random differences. So the instability may be due to splitting along natural differences (e.g. stations/date).
+
+#Rerun split but with random allocations this time
+sh_r4 <- splithalf(eem_list_ex, 4, normalise = TRUE, rand = TRUE, cores = cores, nstart = nstart, maxit = maxit, ctol = ctol)
+splithalf_plot(sh_r4)
+sh_r5 <- splithalf(eem_list_ex, 5, normalise = TRUE, rand = TRUE, cores = cores, nstart = nstart, maxit = maxit, ctol = ctol)
+splithalf_plot(sh_r5)
+#sh_r6 <- splithalf(eem_list_ex, 6, normalise = TRUE, rand = TRUE, cores = cores, nstart = nstart, maxit = maxit, ctol = ctol)
+#splithalf_plot(sh_r6)
+
+beep(sound = 2)
+#Assess split similarity with Tucker's Congruency Coefficients
+tcc_sh_table4 <- splithalf_tcc(sh_r4)
+tcc_sh_table5 <- splithalf_tcc(sh_r5)
+tcc_sh_table6 <- splithalf_tcc(sh_r6)
+
+tcc_sh_table4
+tcc_sh_table5
+tcc_sh_table6
+
+#0.85-0.94 = fair similarity
+#>0.95 can be considered identical - this is what we need
+#According to "Tucker's Congruence Coefficient as a Meaningful Index of Factor Similarity. Lorenzo-Seva, U., ten Berge, J. M. F., 2006 Methodology 2(2):57-64"
+
+sort(tcc_sh_table4$tcc_em)
+sort(tcc_sh_table5$tcc_em)
+sort(tcc_sh_table6$tcc_em)
+#Here we can see that both the 4 and 6 component models are pretty stable
+sort(tcc_sh_table4$tcc_ex)
+sort(tcc_sh_table5$tcc_ex)
+sort(tcc_sh_table6$tcc_ex)
+#Here we can see that while the 4 component model is pretty stable, the 6 component model has 3 splits that don't match.
+
+#2 split comparisons are unstable
+test = eempf_ssc(pfmodels = pf2, cores = cores, tcc = TRUE)
+test
+
+```
+##Core-consistency
+When a sequence of models is run with an increasing number of components, the core consistency tends to start high (near 100%) then drop abruptly at the point when too many components are selected.
+
+In practice for real-world non-ideal datasets, core consistency is not always a reliable diagnostic of the number of PARAFAC components needed. 
+
+In the case of fluorescence EEMs derived from organic matter, published models having high core consistencies tend to have two to four components and in many cases, exhibit unusual spectra.
+
+Conversely, models with five or more components very often have low or even negative core consistencies even when there are otherwise strong indications that the model is capturing real chemical phenomena.
+
+Core consistency applied to organic matter EEMs may provide too much protection against over-fitting and not enough protection against under-fitting. 
+```{r}
+corcondia <- eempf_corcondia(pf4[[1]], eem_list_ex)
+corcondia
+
+corcondia <- eempf_corcondia(pf4[[2]], eem_list_ex)
+corcondia
+```
+
+##EEMqual
+Due to the fact that the core consistency is included, the limitations are similar (see above).
+```{r}
+
+sh4 <- splithalf(eem_list_ex, 4, normalise = TRUE, rand = FALSE, cores = cores, nstart = nstart, strictly_converging = TRUE, maxit = maxit, ctol = ctol)
+sh5 <- splithalf(eem_list_ex, 5, normalise = TRUE, rand = FALSE, cores = cores, nstart = nstart, strictly_converging = TRUE, maxit = maxit, ctol = ctol)
+
+eemqual <- eempf_eemqual(pf4[[1]], eem_list_ex, sh4, cores = cores)
+eemqual
+eemqual <- eempf_eemqual(pf4[[2]], eem_list_ex, sh5, cores = cores)
+eemqual
+
+```
+
+#Component importance
+Currently, there is not one particular way to determine the importance of each component in a model. Still, answering this question is interesting from an ecological point of view. Here, we propose one way, that is commonly used in different modelling processes. You can calculate the component importance using eempf_varimp. Starting from the model you created, each component is removed at a time and a new model is created using the exact previous components. The difference between the original R-squared and the one from the new model with one component reduced.
+
+```{r}
+
+varimp <- eempf_varimp(pf4[[2]], eem_list_ex, cores = cores)
+varimp
+
+```
+#Export for openfluor.org comaprison
+
+```{r}
+
+eempf_openfluor(pf4[[1]], file = "c:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/4component_model_openfluor.txt")
+
+```
+Need to state how much of fluorescence is explained by components.
+Need to run split-half analysis on all models (2-8 components) and choose best when publishing
+Table with number of matches and top 5 matches (citations)?
+
+C1 is humic-like and like coble peak M, with other studies agreeing that it is also humic like - 10.1007/s11356-021-14509-x
+Excitation peak: 305
+Emission peak: 405
+Coble peak M - marine humic-like or wastewater OM, bio- and photoreactive - source = plants, soils, microbial production, and/or transformed products
+
+C2 is humic-like and terrestial delivered organic matter (non-processed OM), and made up of a combination of peak A and C - 10.1016/j.watres.2014.01.053
+Excitation peak: 260 (365)
+Emission peak: 460
+Coble peak A - Humic-like and photoreactive - source = plants/soils
+  Could be UV humic-like
+
+C3 is a protein-like component, specifically tryptophan like component, represents high autochthonous origin and low humification degree - 10.1007/s11356-020-09500-x
+Excitation peak: 285
+Emission peak: 340
+Coble peak T - tryptophan like and bioreactive - source = plants, soils, microbial production, and/or transformed products
+
+C4 is a protein-like compound related to (alkyl-substituted) benzene-derivatives and considered semibiolabile (derived from petroleum) - 10.1021/acs.est.2c01123
+Excitation peak: 265
+Emission peak: 315
+Coble peak B - Tyrosine-like and bioreactive - source = plants, soils, microbial production, and/or transformed products
+
+
+
+C2 is interpreted as Terrestrial humic-like fluorescence in high nutrient and wastewater impacted environments - 10.1021/es103015e
+C2 is Humic-like Terrestrial delivered OM - 10.1016/j.watres.2014.01.053
+Coble peaks A (Humic-like) + C (Humic-like)
+
+C3 is hypothesised to reflect greater microbial processing of terrestrial organic matter, rather than substantial contributions from algae-derived DOM 
+  The significant positive relationship between BIX and the fluorescence of components 4 and 5 (R2=0.83; Figure 7c) suggests that these components can         also be used to predict the degree of microbial degradation in these rivers. - 10.1002/2013JG002320
+C3 resembles protein compounds - 10.3390/w11020390
+Comble peak T (Tryptophan-like, protein-like), overlaps with UVA region peak
+
+#Parafac notes
+typical wavelength region for fulvic acids (λex/λem 320–360/420–460 nm; The position of peak C has a tendency to shift towards shorter excitation and emission wavelengths (blue-shifted) with increased distance from freshwater sources (Coble, 1996). 
+
+Elevated S ratio values can be infered to represent (photo)degradation (10.1016/j.scitotenv.2018.02.237)
+An increase in SR is indicative of a photochemical transformation within the DOM pool (Helms et al., 2008)
+
+Photochemical and/or microbial degradation during euhaline conditions could be such red-shifted DOM fluorescence and enhancing the C3-like fluorescence we observed during August [Scully et al., 2004; Milbrandt et al., 2010]. 
+
+#Normalise Absorbance at 254 nm with DOC for DOM aromaticity
+
+```{r}
+
+A254.df = subset(slope_parms_long, DOM_type == "Absorbance at 254 nm")
+
+A254.df$Station = substr(A254.df$sample,1,nchar(A254.df$sample)-5)
+A254.df$Station = gsub("brun", "Brunsbüttel", A254.df$Station)
+A254.df$Station = gsub("muhl", "Mühlenberger Loch", A254.df$Station)
+A254.df$Station = gsub("schw", "Schwarztonnensand", A254.df$Station)
+A254.df$Station = gsub("twie", "Twielenfleth", A254.df$Station)
+A254.df$Station = gsub("meed", "Meedem Grund", A254.df$Station)
+A254.df
+A254.df$Sample_date = A254.df$Date
+A254.df$Date = NULL
+A254.df$A254 = A254.df$value
+A254.df$DOM_type = NULL
+A254.df$value = NULL
+A254.df$Elbe_km = NULL
+A254.df$sample = NULL
+A254.df = subset(A254.df, !Sample_date == "November.2021")
+
+DOC.df = read.csv("C:/Users/hunefeldt/OneDrive/Desktop/R_analysis/ParticleAnalysis/Data/PhysicochemicalParameters.csv")
+
+DOC.df = unique(DOC.df[,c(4:6,8:14,16:31)])[,c(1,4,11)]
+DOC.df$DOC_mg.L = as.numeric(DOC.df$DOC_mg.L)
+DOC.df = subset(DOC.df, !Station=="NEGATIVE" & !Station=="BunthausSpitze" & !Station=="Kollmar" & !Station=="Seemanshöft")
+
+
+DOC.df$Sample_date = gsub("Feb-22", "February.2022", DOC.df$Sample_date)
+DOC.df$Sample_date = gsub("Jul-21", "July.2021", DOC.df$Sample_date)
+DOC.df$Sample_date = gsub("May-21", "May.2021", DOC.df$Sample_date)
+DOC.df = subset(DOC.df, !Sample_date == "May.2021")
+DOC.df
+
+
+dim(DOC.df)
+dim(A254.df)
+
+A254_sum.df = Rmisc::summarySE(data = A254.df, measurevar = "A254", groupvars = c("Station",
+                                                                                  "Sample_date"))[,c(1,2,4)]
+DOC_sum.df = Rmisc::summarySE(data = DOC.df, measurevar = "DOC_mg.L", groupvars = c("Station",
+                                                                                    "Sample_date"))[,c(1,2,4)]
+
+DOC_sum.df = DOC_sum.df[-4,]
+dim(DOC_sum.df)
+dim(A254_sum.df)
+
+A254_durch_DOC.df = merge(DOC_sum.df, A254_sum.df, by = c("Station", "Sample_date"))
+
+A254_durch_DOC.df$Calc = A254_durch_DOC.df$A254 / A254_durch_DOC.df$DOC_mg.L
+
+A254_durch_DOC.df$Station = factor(A254_durch_DOC.df$Station,
+                             levels = c("Meedem Grund", 
+                                        "Brunsbüttel",
+                                        "Schwarztonnensand",
+                                        "Twielenfleth",
+                                        "Mühlenberger Loch"))
+
+ggplot(data = A254_durch_DOC.df, 
+       aes(x = Station, 
+           y = Calc,
+           colour = Sample_date,
+           group = Sample_date))+
+  geom_point(size = 1)+
+  geom_line(size = 2)+
+  ylab("A254 / DOC")+
+  scale_color_manual("Date", values = cbbPalette)+
+  My_Theme+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+tiff("Figures/SUVA254_A254durchDOC.tiff", units = "in", width = 7, height = 6, res = 120)
+last_plot()
+dev.off()
+
+
+```
+
+
+
+
+
+
+
+
+
+
+#Create PCA plot of data
+http://www.sthda.com/english/articles/31-principal-component-methods-in-r-practical-guide/112-pca-principal-component-analysis-essentials/
+
+```{r Extract excitation and emmision data from eem_list data}
+
+eem_extract_mat <- function(eemdata) {
+  
+  stopifnot(is_eemlist(eemdata) | is_eem(eemdata))
+    if (is_eemlist(eemdata)) {
+      #Apply function to every sample
+      res <- lapply(eemdata, eem_extract_mat)
+      res <- dplyr::bind_rows(res) #Combine different samples into one long format dataframe
+      
+      #Rename column names for clarity
+      names(res)[names(res) == "variable"] <- "excitation"
+      names(res)[names(res) == "em"] <- "emission"
+      
+      #Reformat dataframe to make samples individual columns
+      res = reshape2::dcast(res, excitation + emission ~ sample, value.var="value")
+      
+      return(res)
+    }
+  
+  #Extract data for every sample individually and make a dataframe with it
+  eemdata.mat = as.data.frame(eemdata$x)
+  colnames(eemdata.mat) = eemdata$ex
+  eemdata.mat$em = eemdata$em
+  
+  #Reformat individual wide dataframe to a long format and add sample ID
+  eemdata.mat.long = reshape2::melt(data = eemdata.mat, id.vars = "em")
+  eemdata.mat.long$sample = eemdata$sample
+  
+  return(eemdata.mat.long)
+  
+}
+
+
+
+#test = eem_extract_mat(testeemlist)
+#test2 = tidyr::spread(data = test, key = sample, value = emission)
+#test2 = dcast(test, excitation ~ sample, value.var="emission")
+
+
+#eemdata = eem_list_ex
+#eem_list_ex
+
+#Baseline functions required for calculations when not relying on the eemR package
+is_eemlist <- function (eem) {
+  ifelse(class(eem) == "eemlist", TRUE, FALSE)
+}
+
+is_eem <- function (eem) {
+  ifelse(class(eem) == "eem", TRUE, FALSE)
+}
+
+
+```
+
+##PCA of raw data
+```{r}
+
+test = eem_extract_mat(eem_list_ex)
+
+test$excitation = NULL
+test$emission = NULL
+
+#Fix orientation
+test_ori = t(test)
+
+
+library(factoextra)
+library(FactoMineR)
+
+res.pca <- PCA(test_ori, graph = T)
+
+#fviz_eig(res.pca)
+eig.val <- get_eigenvalue(res.pca)
+eig.val
+
+fviz_eig(res.pca, addlabels = TRUE, ylim = c(0, 75))
+
+var <- get_pca_var(res.pca)
+var$contrib
+#head(var$contrib, 4)
+
+#fviz_pca_var(res.pca, col.var = "black")
+
+#library("corrplot")
+#corrplot::corrplot(var$cos2, is.corr=FALSE)
+
+#fviz_cos2(res.pca, choice = "var", axes = 1:2)
+
+# Contributions of variables to PC1
+fviz_contrib(res.pca, choice = "var", axes = 1, top = 200)
+#The red dashed line on the graph above indicates the expected average contribution. If the contribution of the variables were uniform, the expected value would be 1/length(variables) 
+
+fviz_pca_ind(res.pca,
+             col.ind = "cos2", # Color by the quality of representation
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE     # Avoid text overlapping
+             )
+#Graph of individual samples Positive correlated variables point to the same side of the plot. Negative correlated variables point to opposite sides of the graph.
+
+res.km <- kmeans(var$coord, centers = 3, nstart = 25)
+grp <- as.factor(res.km$cluster)
+
+fviz_pca_var(res.pca,
+             col.var = grp, # Color by contributions to the PC
+             #gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE,     # Avoid text overlapping
+             alpha.var = "contrib", 
+             palette = c("#0073C2FF", "#EFC000FF", "#868686FF"),
+             legend.title = "Cluster"
+             )
+
+#Biplot of individuals and variables
+fviz_pca_biplot(res.pca, repel = TRUE,
+                col.var = "#2E9FDF", # Variables color
+                col.ind = "#696969"  # Individuals color
+                )
+
+#Identify most significant
+res.desc <- dimdesc(res.pca, axes = c(1,2), proba = 0.05)
+# Description of dimension 1
+res.desc$Dim.1
+# Description of dimension 2
+res.desc$Dim.2
+
+
+fviz_pca_ind(res.pca, col.ind = "cos2", pointsize = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE # Avoid text overlapping (slow if many points)
+             )
+
+# Total contribution on PC1 and PC2
+fviz_contrib(res.pca, choice = "ind", axes = 1:2)
+
+
+```
+
+
+##PCA of Peak/Indices/Slope data
+
+```{r}
+
+
+slope_parms_long
+indices_peaks_long
+
+
+PeaksSlopes.df = rbind(slope_parms_long, indices_peaks_long)
+
+#Convert to dataframe with n rows (individuals) and p columns (numeric variables) 
+#Convert from long to wide format
+
+PeaksSlopes.df = subset(PeaksSlopes.df, Date!="Nov-21" & Date!="Jul-21")
+
+PeaksSlopes_wide.df = spread(PeaksSlopes.df, DOM_type, value)
+
+#OnlyPeaksSlopes.df = PeaksSlopes_wide.df
+#OnlyPeaksSlopes.df$Date = NULL
+#OnlyPeaksSlopes.df$Elbe_km = NULL
+#rownames(OnlyPeaksSlopes.df) = OnlyPeaksSlopes.df$sample
+#OnlyPeaksSlopes.df$sample = NULL
+
+rescurated.pca <- FactoMineR::PCA(PeaksSlopes_wide.df, graph = T, quali.sup = c(1,2,3), scale.unit = T)
+
+```
+```{r Visualise and plot PCA}
+
+#fviz_eig(res.pca)
+eig.val <- factoextra::get_eigenvalue(rescurated.pca)
+eig.val
+
+factoextra::fviz_eig(rescurated.pca, addlabels = TRUE, ylim = c(0, 75))
+
+var <- factoextra::get_pca_var(rescurated.pca)
+var$contrib
+#head(var$contrib, 4)
+
+#fviz_pca_var(res.pca, col.var = "black")
+
+#library("corrplot")
+#corrplot::corrplot(var$cos2, is.corr=FALSE)
+
+#fviz_cos2(res.pca, choice = "var", axes = 1:2)
+
+# Contributions of variables to PC1
+factoextra::fviz_contrib(rescurated.pca, choice = "var", axes = 1, top = 200)
+#The red dashed line on the graph above indicates the expected average contribution. If the contribution of the variables were uniform, the expected value would be 1/length(variables) 
+
+#fviz_pca_ind(rescurated.pca,
+ #            col.ind = "cos2", # Color by the quality of representation
+  #           gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+   #          repel = TRUE     # Avoid text overlapping
+    #         )
+#Graph of individual samples Positive correlated variables point to the same side of the plot. Negative correlated variables point to opposite sides of the graph.
+
+#res.km <- kmeans(var$coord, centers = 3, nstart = 25)
+#grp <- as.factor(res.km$cluster)
+
+#fviz_pca_var(rescurated.pca,
+ #            col.var = grp, # Color by contributions to the PC
+  #           #gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+   #          repel = TRUE,     # Avoid text overlapping
+    #         alpha.var = "contrib", 
+     #        palette = c("#0073C2FF", "#EFC000FF", "#868686FF"),
+      #       legend.title = "Cluster"
+       #      )
+
+
+
+
+PeaksSlopes_wide.df$Date = as.factor(as.character(PeaksSlopes_wide.df$Date))
+
+
+# Total contribution on PC1 and PC2
+factoextra::fviz_contrib(rescurated.pca, choice = "var", axes = 1)
+
+tiff("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/Figures/PCA_DOM_peaks_contributionVar.tiff", units = "in", height = 5, width = 6, res = 120)
+last_plot()
+dev.off()
+
+#Identify most significant
+#res.desc <- dimdesc(rescurated.pca, axes = c(1,2), proba = 0.05)
+# Description of dimension 1
+#res.desc$Dim.1
+# Description of dimension 2
+#res.desc$Dim.2
+
+
+factoextra::fviz_pca_ind(rescurated.pca, 
+             #col.ind = as.factor(as.character(PeaksSlopes_wide.df$Date)), 
+             pointsize = 3,
+             label="none"
+             #gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             #repel = TRUE # Avoid text overlapping (slow if many points)
+             )+
+  geom_point(aes(shape = factor(PeaksSlopes_wide.df$Date), 
+                 colour = as.numeric(PeaksSlopes_wide.df$Elbe_km)), 
+             size = 5)
+  
+
+
+PeaksSlopes_wide.df$Elbe_km = as.numeric(PeaksSlopes_wide.df$Elbe_km)
+#Biplot of individuals and variables
+factoextra::fviz_pca_biplot(rescurated.pca,
+                            öabel = "var",
+                            col.var = "#000000", # Variables color
+                            select.var = list(contrib = 5),
+                            geom = "point",
+                            colour = "white"
+                            )+
+  geom_point(aes(shape = factor(PeaksSlopes_wide.df$Date), 
+                 colour = as.numeric(PeaksSlopes_wide.df$Elbe_km)), 
+             size = 10)+
+    scale_shape_manual("Sampling Dates", 
+                     values = Shape_list)+
+  scale_color_gradient2("Elbe km", 
+                        low="green", 
+                        mid="blue",
+                        high="red", 
+                        midpoint=680,
+                        guide = "colourbar")+
+  #guides(colour = guide_legend(order = 1),
+   #      Groups = "none",
+    #     shape = guide_legend(order = 2))
+  Poster_Theme+
+  theme(legend.position = "bottom")
+  
+
+#tiff("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/ParticleAnalysis/Poster/PosterPCA_DOM_peaks.tiff", units = "cm", width = 24, height = 18, res = 120)
+#last_plot()
+#dev.off()
+
+pdf("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/ParticleAnalysis/Poster/PosterPCA_DOM_peaks.pdf", height = 7.08661, width = 9.44882)
+last_plot()
+dev.off()
+
+```
+Might need to remove sample brun20222 as it is contributing quite a bit to the layout, and doesn't match its replicate
+
+```{r Check for significant trends}
+PeaksSlopes_wide.df
+
+#Absorbance at 300 nm
+cor.test(PeaksSlopes_wide.df$`Absorbance at 300 nm`, PeaksSlopes_wide.df$Elbe_km, method = "s")
+summary(aov(`Absorbance at 300 nm` ~ Elbe_km, data = PeaksSlopes_wide.df))
+adonis2(PeaksSlopes_wide.df$`Absorbance at 300 nm` ~ Elbe_km, data = PeaksSlopes_wide.df)
+
+#Absorbance at 254 nm
+cor.test(PeaksSlopes_wide.df$`Absorbance at 254 nm`, PeaksSlopes_wide.df$Elbe_km, method = "s")
+adonis2(PeaksSlopes_wide.df$`Absorbance at 254 nm` ~ Elbe_km, data = PeaksSlopes_wide.df)
+
+#neg_MW_aromaticity
+cor.test(PeaksSlopes_wide.df$neg_MW_aromaticity, PeaksSlopes_wide.df$Elbe_km, method = "s")
+adonis2(PeaksSlopes_wide.df$neg_MW_aromaticity ~ Elbe_km, data = PeaksSlopes_wide.df)
+
+#a
+cor.test(PeaksSlopes_wide.df$a, PeaksSlopes_wide.df$Elbe_km, method = "s")
+adonis2(PeaksSlopes_wide.df$a ~ Elbe_km, data = PeaksSlopes_wide.df)
+
+#c
+cor.test(PeaksSlopes_wide.df$c, PeaksSlopes_wide.df$Elbe_km, method = "s")
+adonis2(PeaksSlopes_wide.df$c ~ Elbe_km, data = PeaksSlopes_wide.df)
+
+
+```
+#Check for significant differences between samples as a whole using ecologically relevant Peak and Slope wavelengths 
+
+```{r}
+
+slope_parms_long
+indices_peaks_long
+
+
+PeaksSlopes.df = rbind(slope_parms_long, indices_peaks_long)
+
+#Convert to dataframe with n rows (individuals) and p columns (numeric variables) 
+#Convert from long to wide format
+
+PeaksSlopes_wide.df = spread(PeaksSlopes.df, DOM_type, value)
+
+```
+##Calculate dissimilarity
+```{r Combine and curate individual ecologically relevant wavelength measurements}
+OnlyPeaksSlopes.df = PeaksSlopes_wide.df[-c(1:3)]
+
+Bray.df = vegan::vegdist(OnlyPeaksSlopes.df, method = "bray", binary = F)
+
+#View(as.matrix(Bray.df))
+
+#a_zscale<-(OnlyPeaksSlopes.df$a-mean(OnlyPeaksSlopes.df$a))/sd(OnlyPeaksSlopes.df$a)
+#sapply(OnlyPeaksSlopes.df, function(x) (x-mean(x))/sd(x) ) 
+
+
+NormalisedBray.df = sapply(OnlyPeaksSlopes.df, function(x) (x/max(x)) ) 
+rownames(NormalisedBray.df) = rownames(OnlyPeaksSlopes.df)
+colnames(NormalisedBray.df) = colnames(OnlyPeaksSlopes.df)
+NormalisedBray.df = as.data.frame(as.matrix(NormalisedBray.df))
+
+#Bray-Curtis dissimilarity is sensitive to negative values and as some values are negative we need to add a pseudocount (adding a minimum value) to the data frame.
+pseudocount = min(NormalisedBray.df)
+
+NormalisedBray.df = NormalisedBray.df - pseudocount
+
+Bray.df = vegan::vegdist(NormalisedBray.df, method = "bray", binary = F)
+Bray.df = as.data.frame(as.matrix(Bray.df))
+
+
+Bray.df$Sample_ID = rownames(Bray.df) #Make rownames another column
+colnames(Bray.df) #Check to make sure rename worked
+Braydf_long = reshape2::melt(Bray.df, id.vars = "Sample_ID") #Make df into long format
+#Rename y axis so more meaningful
+colnames(Braydf_long)[3] <- "Bray_dissimilarity"
+colnames(Braydf_long)[2] <- "Var2" 
+colnames(Braydf_long)[1] <- "Var1" 
+#Remove self-comparisons
+Braydf_long = Braydf_long %>%
+    dplyr::filter(as.character(Var1) != as.character(Var2)) %>%
+    dplyr::mutate_if(is.factor,
+              as.character)
+Temporary_df = Braydf_long 
+
+
+#Determine source of sample
+Temporary_df$Station = NA
+for (i in 1:nrow(Temporary_df)) {
+if (grepl("twie", Temporary_df$Var1[i]) == T){
+  Temporary_df$Station[i] = "Twielenfleth"
+} else if (grepl("muhl", Temporary_df$Var1[i]) == T){
+  Temporary_df$Station[i] = "Muehlenberger Loch"
+} else if (grepl("schw", Temporary_df$Var1[i]) == T){
+  Temporary_df$Station[i] = "Schwarztonnensand"
+} else if (grepl("brun", Temporary_df$Var1[i]) == T){
+  Temporary_df$Station[i] = "Brunsbuettel"
+} else if (grepl("meed", Temporary_df$Var1[i]) == T){
+  Temporary_df$Station[i] = "Meedem grund"
+}
+  i=i+1
+}
+
+#Determine when sample was collected
+Temporary_df$Sample_time = NA
+for (i in 1:nrow(Temporary_df)) {
+if (grepl("10222", Temporary_df$Var1[i]) == T){
+  Temporary_df$Sample_time[i] = "Feb-22"
+} else if (grepl("20222", Temporary_df$Var1[i]) == T){
+  Temporary_df$Sample_time[i] = "Feb-22"
+} else if (grepl("10522", Temporary_df$Var1[i]) == T){
+  Temporary_df$Sample_time[i] = "May-22"
+} else if (grepl("20522", Temporary_df$Var1[i]) == T){
+  Temporary_df$Sample_time[i] = "May-22"
+} else if (grepl("10622", Temporary_df$Var1[i]) == T){
+  Temporary_df$Sample_time[i] = "Jun-22"
+} else if (grepl("20622", Temporary_df$Var1[i]) == T){
+  Temporary_df$Sample_time[i] = "Jun-22"
+} else if (grepl("10721", Temporary_df$Var1[i]) == T){
+  Temporary_df$Sample_time[i] = "Jul-21"
+} else if (grepl("20721", Temporary_df$Var1[i]) == T){
+  Temporary_df$Sample_time[i] = "Jul-21"
+} else if (grepl("11121", Temporary_df$Var1[i]) == T){
+  Temporary_df$Sample_time[i] = "Nov-21"
+} else if (grepl("21121", Temporary_df$Var1[i]) == T){
+  Temporary_df$Sample_time[i] = "Nov-21"
+}
+  i=i+1
+}
+
+
+```
+```{r Check for trends}
+
+####By Elbe_km####
+
+Station_ano = vegan::anosim(NormalisedBray.df, PeaksSlopes_wide.df$Elbe_km, distance = "bray")
+Station_ano$signif #0.324
+Station_ano$statistic #0.01581197
+#No significant differences between group means
+
+Depth_ado = vegan::adonis2(NormalisedBray.df ~ Elbe_km, data = PeaksSlopes_wide.df, method = "bray")
+Depth_ado
+#No significant differences between group means and distribution
+#R2 = 0.12716
+#p = 0.321
+
+####By Date####
+
+Station_ano = vegan::anosim(NormalisedBray.df, PeaksSlopes_wide.df$Date, distance = "bray")
+Station_ano$signif #0.001
+Station_ano$statistic #0.604726
+#Significant differences between group means
+
+Depth_ado = vegan::adonis2(NormalisedBray.df ~ Date, data = PeaksSlopes_wide.df, method = "bray")
+Depth_ado
+#Significant differences between group means and distribution
+#R2 = 0.62301
+#p = 0.001
+
+
+```
+##What is the source of these differences between Dates?
+```{r Identify if single peaks/slopes are significantly different}
+
+anova_results = purrr::map(PeaksSlopes_wide.df[,4:21], ~aov(.x ~ PeaksSlopes_wide.df$Date))
+
+
+anova_sum = data.frame(DOM_type = colnames(PeaksSlopes_wide.df[,4:21]),
+                      # R = 9999,
+                       p.value = 9999,
+                       eta2 = 9999)
+i=1
+for (i in 1:18) {
+  
+  
+  tmp = summary(anova_results[[i]])
+  tmp2 = rstatix::eta_squared(anova_results[[i]])
+  
+  anova_sum[i,2] = tmp[[1]]$`Pr(>F)`[1]
+  anova_sum[i,3] = tmp2
+  
+}
+
+anova_sum
+
+write.csv(anova_sum, "C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/ParticleAnalysis/Manusript_Figures/Anova_EEM.csv")
+
+#All show significant differences between dates
+
+#Convert from wide to long format
+PeaksSlopes.ldf = gather(PeaksSlopes_wide.df, measure, value, a:t, factor_key = T)
+
+
+PeaksSlopes_Date.sum = PeaksSlopes.ldf %>%
+  dplyr::group_by(Date, measure) %>%
+  dplyr:::summarise(mean = mean(as.numeric(value)), 
+                   sd = sd(as.numeric(value)))
+PeaksSlopes_Date.sum
+
+ggplot(PeaksSlopes_Date.sum, aes(x = Date, y = mean, colour = measure, group = measure))+
+  geom_line()
+
+```
+##Isolate and display top 5 contributors to inter-sample differences
+```{r}
+
+slope_parms_long
+indices_peaks_long
+
+
+PeaksSlopes.df = rbind(slope_parms_long, indices_peaks_long)
+
+#Convert to dataframe with n rows (individuals) and p columns (numeric variables) 
+#Convert from long to wide format
+
+PeaksSlopes_wide.df = spread(PeaksSlopes.df, DOM_type, value)
+
+```
+```{r Plot top 5 contributors}
+
+Top5Contrib.df = PeaksSlopes_wide.df[,c(1:6,9,14)]
+
+Top5Contrib_long.df = Top5Contrib.df %>% gather(key = DOM_measurement, value = value, a:m)
+
+Top5Contrib_sum = Rmisc::summarySE(Top5Contrib_long.df, measurevar = "value", groupvars = c("Elbe_km", "Date", "DOM_measurement"))
+
+Top5Contrib_sum$Date = factor(Top5Contrib_sum$Date,
+                                levels = c("Jul-21",
+                                           "Nov-21",
+                                           "Feb-22",
+                                           "May-22",
+                                           "Jun-22"))
+
+Top5Contrib_sum = subset(Top5Contrib_sum, Date!="Nov-21")
+
+unique(Top5Contrib_sum$DOM_measurement)
+Top5Contrib_sum$DOM_measurement = factor(Top5Contrib_sum$DOM_measurement,
+                                levels = c("Absorbance at 254 nm",
+                                           "Absorbance at 300 nm",
+                                           "a",
+                                           "c",
+                                           "m"))
+
+
+ggplot(data = Top5Contrib_sum, aes(x = as.numeric(as.character(Elbe_km)), y = value, colour = Date, group = Date)) +
+  geom_line(size = 1)+
+  scale_y_log10()+
+  scale_color_manual(values = cbbPalette)+
+  facet_grid(. ~ DOM_measurement)+
+  My_Theme+
+  xlab("Elbe kilometer")+
+  scale_x_reverse()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+tiff("C:/Users/hunefeldt/OneDrive/Desktop/R_analysis/EEM_PARAFAC/R_Analysis/Figures/Top5_DOM_peaks.tiff", units = "in", height = 10, width = 12, res = 120)
+last_plot()
+dev.off()
+
+```
