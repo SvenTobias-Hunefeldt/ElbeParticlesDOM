@@ -1,0 +1,91 @@
+Filter number,Station,Date,Fraction
+1,Bunthaus Spitze,May.2021,Light
+2,Bunthaus Spitze,May.2021,Heavy
+3,Muhlenberger Loch,May.2021,Light
+4,Muhlenberger Loch,May.2021,Heavy
+5,Twielenfleth,May.2021,Light
+6,Twielenfleth,May.2021,Heavy
+7,Schwarztonnensand,May.2021,Light
+8,Schwarztonnensand,May.2021,Heavy
+9,Brunsbuttel,May.2021,Light
+10,Brunsbuttel,May.2021,Heavy
+11,Meedem Grund,May.2021,Light
+12,Meedem Grund,May.2021,Heavy
+13,Muhlenberger Loch,Jul.2021,Light
+14,Muhlenberger Loch,Jul.2021,Heavy
+15,Twielenfleth,Jul.2021,Light
+16,Twielenfleth,Jul.2021,Heavy
+17,Schwarztonnensand,Jul.2021,Light
+18,Schwarztonnensand,Jul.2021,Heavy
+19,Brunsbuttel,Jul.2021,Light
+20,Brunsbuttel,Jul.2021,Heavy
+21,Meedem Grund,Jul.2021,Light
+22,Meedem Grund,Jul.2021,Heavy
+23,Kollmar,November.2021,Light
+24,Kollmar,November.2021,Heavy
+25,Seemanshöft,November.2021,Light
+26,Seemanshöft,November.2021,Heavy
+27,Kollmar,November.2021,Light
+28,Kollmar 200mL,November.2021,Light
+29,Bunthaus,November.2021,Light
+30,Bunthaus,November.2021,Light
+31,Muhlenberger Loch,Feb.2022,Light
+32,Muhlenberger Loch,Feb.2022,Heavy
+33,Twielenfleth,Feb.2022,Light
+34,Twielenfleth,Feb.2022,Heavy
+35,Schwarztonnensand,Feb.2022,Light
+36,Schwarztonnensand,Feb.2022,Heavy
+37,Brunsbuttel,Feb.2022,Light
+38,Brunsbuttel,Feb.2022,Heavy
+39,Meedem Grund,Feb.2022,Light
+40,Meedem Grund,Feb.2022,Heavy
+41,P00_a,Feb.2022,Mixed
+42,P00_b,Feb.2022,Mixed
+43,P00_c,Feb.2022,Mixed
+44,P01_a,Feb.2022,Mixed
+45,P01_b,Feb.2022,Mixed
+46,P01_c,Feb.2022,Mixed
+47,P02_a,Feb.2022,Mixed
+48,P02_b,Feb.2022,Mixed
+49,P02_c,Feb.2022,Mixed
+50,P03_a,Feb.2022,Mixed
+51,P03_b,Feb.2022,Mixed
+52,P03_c,Feb.2022,Mixed
+53,P05_a,Feb.2022,Mixed
+54,P05_b,Feb.2022,Mixed
+55,P05_c,Feb.2022,Mixed
+56,P07_a,Feb.2022,Mixed
+57,P07_b,Feb.2022,Mixed
+58,P07_c,Feb.2022,Mixed
+59,P10_a,Feb.2022,Mixed
+60,P10_b,Feb.2022,Mixed
+61,Muhlenberger Loch,May.2022,Heavy
+62,Muhlenberger Loch,May.2022,Light
+63,Twielenfleth,May.2022,Heavy
+64,Twielenfleth,May.2022,Light
+65,Schwarztonnensand,May.2022,Heavy
+66,Schwarztonnensand,May.2022,Light
+67,Brunsbuttel,May.2022,Heavy
+68,Brunsbuttel,May.2022,Light
+69,Meedem Grund,May.2022,Heavy
+70,Meedem Grund,May.2022,Light
+71,Muhlenberger Loch,Jun.2022,Light
+72,Muhlenberger Loch,Jun.2022,Heavy
+73,Twielenfleth,Jun.2022,Light
+74,Twielenfleth,Jun.2022,Heavy
+75,Schwarztonnensand,Jun.2022,Light
+76,Schwarztonnensand,Jun.2022,Heavy
+77,Brunsbuttel,Jun.2022,Light
+78,Brunsbuttel,Jun.2022,Heavy
+79,Meedem Grund,Jun.2022,Light
+80,Meedem Grund,Jun.2022,Heavy
+81,Muhlenberger Loch,Nov.2022,Light
+82,Muhlenberger Loch,Nov.2022,Heavy
+83,Twielenfleth,Nov.2022,Light
+84,Twielenfleth,Nov.2022,Heavy
+85,Schwarztonnensand,Nov.2022,Light
+86,Schwarztonnensand,Nov.2022,Heavy
+87,Brunsbuttel,Nov.2022,Light
+88,Brunsbuttel,Nov.2022,Heavy
+89,Meedem Grund,Nov.2022,Light
+90,Meedem Grund,Nov.2022,Heavy
