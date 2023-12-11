@@ -155,9 +155,9 @@ So a dilution to half (1mL MW : 1 mL Sample) means a dilution factor of 2
 
 #Generate metadata file
 eem_metatemplate(eem_list, absorbance) %>%
-  write.csv(file="C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/metatable.csv", row.names = FALSE)
+  write.csv(file="/YOUR/PATH/HERE/metatable.csv", row.names = FALSE)
 
-meta = read.csv("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/metatable_dreem.csv", row.names = 1)
+meta = read.csv("/YOUR/PATH/HERE/metatable_dreem.csv", row.names = 1)
 
 ```
 ##Check that import worked fine
@@ -187,7 +187,7 @@ if (val > 0) {
 
 #Remove blank values manually in excel:
 #write.csv(absorbance,  "CorrectedAbsorbance.csv")
-absorbance = read.csv("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/CorrectedAbundance_mod.csv", header = T)
+absorbance = read.csv("/YOUR/PATH/HERE/CorrectedAbundance_mod.csv", header = T)
 #absorbance_V0 = absorbance
 colnames(absorbance) = gsub("ï..", "", colnames(absorbance))
 
@@ -499,7 +499,7 @@ indices_peaks$Elbe_km = gsub("brun", 694, indices_peaks$Elbe_km)
 indices_peaks$Elbe_km = gsub("meed", 712, indices_peaks$Elbe_km)
 
 
-write.csv(indices_peaks, file = "C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/indices_peaks.csv", row.names = FALSE)
+write.csv(indices_peaks, file = "/YOUR/PATH/HERE/indices_peaks.csv", row.names = FALSE)
 
 #Convert to long format for easy plotting
 indices_peaks_long <- indices_peaks %>% gather(DOM_type, value, -c("sample","Date", "Elbe_km"))
@@ -559,7 +559,7 @@ ggplot(data = indices_peaks_sum, aes(x = as.numeric(as.character(Elbe_km)), y = 
   scale_y_log10()+
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-#tiff("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/Figures/DOM_peaks.tiff", units = "in", height = 6, width = 20, res = 120)
+#tiff("/YOUR/PATH/HERE/DOM_peaks.tiff", units = "in", height = 6, width = 20, res = 120)
 #last_plot()
 #dev.off()
 
@@ -670,7 +670,7 @@ slope_parms$Elbe_km = gsub("schw", 665, slope_parms$Elbe_km)
 slope_parms$Elbe_km = gsub("brun", 694, slope_parms$Elbe_km)
 slope_parms$Elbe_km = gsub("meed", 712, slope_parms$Elbe_km)
 
-write.csv(slope_parms, file = "C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/absorbance_slopes.csv", row.names = FALSE)
+write.csv(slope_parms, file = "/YOUR/PATH/HERE/absorbance_slopes.csv", row.names = FALSE)
 
 
 #Convert to long format for easy plotting
@@ -725,7 +725,7 @@ ggplot(data = Slopesonly, aes(x = as.numeric(as.character(Elbe_km)), y = value, 
   scale_x_reverse()+
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-#tiff("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/Figures/DOM_slopes1.tiff", units = "in", height = 10, width = 20, res = 120)
+#tiff("/YOUR/PATH/HERE/DOM_slopes1.tiff", units = "in", height = 10, width = 20, res = 120)
 #last_plot()
 #dev.off()
 
@@ -739,7 +739,7 @@ ggplot(data = subset(Indicesonly, DOM_type!='Degree of humification \nand aromat
   scale_x_reverse()+
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-#tiff("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/Figures/DOM_slopes2.tiff", units = "in", height = 10, width = 20, res = 120)
+#tiff("/YOUR/PATH/HERE/DOM_slopes2.tiff", units = "in", height = 10, width = 20, res = 120)
 #last_plot()
 #dev.off()
 
@@ -753,7 +753,7 @@ ggplot(data = subset(Indicesonly, DOM_type=='Degree of humification \nand aromat
   scale_x_reverse()+
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-#tiff("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/Figures/DOM_slopes3.tiff", units = "in", height = 10, width = 20, res = 120)
+#tiff("/YOUR/PATH/HERE/DOM_slopes3.tiff", units = "in", height = 10, width = 20, res = 120)
 #last_plot()
 #dev.off()
 
@@ -1115,8 +1115,8 @@ ggeem(pf4[[1]], contour = TRUE)
 #Plot identified components and loadings
 ```{r}
 
-eempf_comp_load_plot(pf4[[2]], contour = TRUE)
-pf4[[2]]
+eempf_comp_load_plot(pf4[[1]], contour = TRUE)
+pf4[[1]]
 #pf4 = pf4_RawBU
 #pf4 = pf4_BU
 #Extract dataframe
@@ -1188,20 +1188,21 @@ intensity.df_sum$Station = factor(intensity.df_sum$Station,
 
 ggplot(data = intensity.df_sum, 
        aes(x = as.numeric(Elbe_km), 
-           y = (amount / max(amount)),
+           y = (amount / max(amount)*100),
            colour = comp,
            group = comp))+
   geom_point(size = 1)+
   geom_line(size = 1)+
   facet_grid(Date ~ .)+
   ylab("Component intensity set to \nmaximum component value")+
+  xlab("Elbe km")+
   scale_color_manual("Components", values = cbbPalette)+
   My_Theme+
   theme(axis.text.x = element_text(angle = 45, hjust = 1))+
   scale_x_reverse()
 
 
-tiff("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/Figures/Intensity.tiff", units = "in", width = 7, height = 6, res = 120)
+tiff("/YOUR/PATH/HERE/Intensity.tiff", units = "in", width = 7, height = 6, res = 120)
 last_plot()
 dev.off()
 
@@ -1272,7 +1273,7 @@ ggplot(data = subset(intensity_long_sum.df, Date!="Jul-21"),
   geom_point(size = 1)+
   geom_line(size = 1)+
   facet_grid(Date ~ .)+
-  xlab("Elbe kilometer")+
+  xlab("Elbe km")+
   ylab("Component contribution to \ntotal fluorescence (%)")+
   scale_color_manual("Components", values = cbbPalette)+
   My_Theme+
@@ -1284,6 +1285,10 @@ ggplot(data = subset(intensity_long_sum.df, Date!="Jul-21"),
   scale_y_continuous(breaks = c(0, 20, 40))
 
 tiff("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/ParticleAnalysis/Poster/RelativeDOMIntensity.tiff", units = "cm", width = 24, height = 18, res = 120)
+last_plot()
+dev.off()
+
+pdf("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/ParticleAnalysis/Manusript_Figures/Figure7_RelativeDOMIntensity.pdf", width = 10, height = 7)
 last_plot()
 dev.off()
 
@@ -1323,7 +1328,7 @@ summary(quadraticModel)
 picture.plt = eempf_residuals_plot(pf4[[1]], eem_list_ex, select = eem_names(eem_list_ex), cores = cores, contour = TRUE)
 
 #Save plot
-pdf("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/Figures/Model4CompResid.pdf", width = 12, height = 8)
+pdf("/YOUR/PATH/HERE/Model4CompResid.pdf", width = 12, height = 8)
 picture.plt
 dev.off()
 
@@ -1439,7 +1444,7 @@ varimp
 
 ```{r}
 
-eempf_openfluor(pf4[[1]], file = "c:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/4component_model_openfluor.txt")
+eempf_openfluor(pf4[[1]], file = "/YOUR/PATH/HERE/4component_model_openfluor.txt")
 
 ```
 Need to state how much of fluorescence is explained by components.
@@ -1792,7 +1797,7 @@ PeaksSlopes_wide.df$Date = as.factor(as.character(PeaksSlopes_wide.df$Date))
 # Total contribution on PC1 and PC2
 factoextra::fviz_contrib(rescurated.pca, choice = "var", axes = 1)
 
-tiff("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/EEM_PARAFAC/R_Analysis/Figures/PCA_DOM_peaks_contributionVar.tiff", units = "in", height = 5, width = 6, res = 120)
+tiff("/YOUR/PATH/HERE/PCA_DOM_peaks_contributionVar.tiff", units = "in", height = 5, width = 6, res = 120)
 last_plot()
 dev.off()
 
