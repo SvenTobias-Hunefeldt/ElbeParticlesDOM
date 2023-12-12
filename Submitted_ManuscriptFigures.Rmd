@@ -3793,7 +3793,7 @@ print(MeanDate)
 
 
 ####Prepare df####
-Chla.df = read.csv("C:/Users/hunefeldt/OneDrive/Desktop/PhD/R_analysis/ParticleAnalysis/Data/Chl.csv", encoding = "UTF-8", sep = ";")
+Chla.df = read.csv("/YOUR/PATH/HERE/Data/Chl.csv", encoding = "UTF-8", sep = ";")
 
 Chla.df = subset(Chla.df, Date=="28.02.2022" | Date=="22.05.2022" | Date=="20.06.2022" | Date=="08.11.2022")
 
