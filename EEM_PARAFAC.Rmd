@@ -2117,3 +2117,81 @@ last_plot()
 dev.off()
 
 ```
+
+#Significant correlation to suspended & sinking POC to C1 and C2
+```{r}
+POC.df = metadata %>%
+  select(station_km, Sample_date, Sample_type, POC_mgperL) %>%
+  rename(Date = Sample_date) %>%
+  rename(Elbe_km = station_km) %>%
+  filter(Sample_type!="Free_living") %>%
+  mutate(Elbe_km = as.character(Elbe_km)) %>%
+  as.data.frame() %>%
+  mutate(Date = gsub(" ", "-", Date))
+
+
+test = intensity_long_sum.df %>%
+  mutate(Elbe_km = gsub("694", "692", Elbe_km)) %>%
+  mutate(Elbe_km = gsub("712", "713", Elbe_km)) %>%
+  filter(variable == "Marine/Humic-like" | variable == "Terrestial/Humic-like") %>%
+  left_join(POC.df)
+
+
+
+
+#Suspended to C2/Terrestrial fit
+model <- lm(RelativeContribution ~ POC_mgperL, data = filter(test, variable == "Terrestial/Humic-like" & Sample_type == "Light_fraction"))
+model
+summary(model)
+confint(model)
+sigma(model)*100/mean(filter(test, variable == "Terrestial/Humic-like" & Sample_type == "Light_fraction")$POC_mgperL)
+
+#RSE: Closer to zero the better
+#R-Squared: Higher the better
+#F-statistic: Higher the better
+
+#Sinking to C1/Marine fit
+model <- lm(RelativeContribution ~ POC_mgperL, data = filter(test, variable == "Marine/Humic-like" & Sample_type == "Heavy_fraction"))
+model
+summary(model)
+confint(model)
+sigma(model)*100/mean(filter(test, variable == "Marine/Humic-like" & Sample_type == "Heavy_fraction")$POC_mgperL)
+
+#RSE: Closer to zero the better
+#R-Squared: Higher the better
+#F-statistic: Higher the better
+
+
+
+Sinking_C1.plt = ggplot(filter(test, variable == "Marine/Humic-like" & Sample_type == "Heavy_fraction"), aes(x = RelativeContribution, y = POC_mgperL)) +
+  geom_point() +
+  geom_smooth(method='lm', formula= y~x) +
+  #facet_grid(.~Sample_type) + 
+  ggpubr::stat_compare_means()+
+  xlab("Relative fluorescence of marine/humic-like compound") +
+  ylab("Sinking particle POC (mg L-1)")+
+  My_Theme
+  
+Sinking_C1.plt
+
+
+Suspended_C2.plt = ggplot(filter(test, variable == "Terrestial/Humic-like" & Sample_type == "Light_fraction"), aes(x = RelativeContribution, y = POC_mgperL)) +
+  geom_point() +
+  geom_smooth(method='lm', formula= y~x) +
+  #facet_grid(.~Sample_type) + 
+  ggpubr::stat_compare_means()+
+  xlab("Relative fluorescence of terrestrial/humic-like compound") +
+  ylab("Suspended particle POC (mg L-1)")+
+  My_Theme
+  
+Suspended_C2.plt
+
+both.plt = ggpubr::ggarrange(Sinking_C1.plt, Suspended_C2.plt,
+                  ncol = 1, nrow = 2)
+both.plt
+
+pdf(paste0(path, "POC_to_PARAFACCompounds.pdf"), height = 8, width = 8)
+both.plt
+dev.off()
+
+```
